@@ -1,0 +1,793 @@
+app:
+  description: 'author: Ding
+
+    实现表格灵活对应'
+  icon: smiling_face_with_3_hearts
+  icon_background: '#FFEAD5'
+  mode: advanced-chat
+  name: CRUD- Ding v0.7（前置）
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/openai:0.0.11@390c87cc0f17370a70d3b214cd71a8de81fe9d6b52e6a38287acde034138b672
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/x:0.0.3@43a3a724a2945f55393b78a3d1868c81ce9394093a8a4d7adee1c3da19f2887c
+kind: app
+version: 0.1.5
+workflow:
+  conversation_variables:
+  - description: ''
+    id: 2bfa5b03-6942-4d36-9c2c-d29cbeb24a30
+    name: delete_show
+    selector:
+    - conversation
+    - delete_show
+    value: ''
+    value_type: string
+  - description: ''
+    id: 35f52bb5-6615-4226-852f-649df6d01abd
+    name: delete_array
+    selector:
+    - conversation
+    - delete_array
+    value: []
+    value_type: array[string]
+  - description: ''
+    id: edfda5cf-0fe2-4f0a-bebe-5052fa3fd0f4
+    name: data_sample
+    selector:
+    - conversation
+    - data_sample
+    value: ''
+    value_type: string
+  - description: ''
+    id: 41d10c54-90b2-4078-8ff2-78dd7168efff
+    name: table_names
+    selector:
+    - conversation
+    - table_names
+    value: []
+    value_type: array[string]
+  - description: ''
+    id: b5239e75-c361-445e-abf9-f066d8064268
+    name: content_delete
+    selector:
+    - conversation
+    - content_delete
+    value: ''
+    value_type: string
+  - description: ''
+    id: 690072b3-b837-4a48-8131-a49c08e013ae
+    name: content_new
+    selector:
+    - conversation
+    - content_new
+    value: ''
+    value_type: string
+  - description: 记录1-多条最新数据状态
+    id: 06c26f26-f5bc-4cd8-883b-cf5c793cba1e
+    name: lastest_content_production
+    selector:
+    - conversation
+    - lastest_content_production
+    value: []
+    value_type: array[string]
+  - description: ''
+    id: edf253f4-b6bf-4363-aa3f-e7bef9a35131
+    name: biaojiegou_save
+    selector:
+    - conversation
+    - biaojiegou_save
+    value: ''
+    value_type: string
+  - description: ''
+    id: d2ce6b95-4d6e-4ec2-92ed-0afb528d21dd
+    name: save_content
+    selector:
+    - conversation
+    - save_content
+    value: ''
+    value_type: string
+  - description: ''
+    id: c51302bc-24d6-4c23-bd37-3c2f781a579e
+    name: id_check
+    selector:
+    - conversation
+    - id_check
+    value: ''
+    value_type: string
+  - description: ''
+    id: 4e987a00-c041-4f7d-8662-1d5668cefbc9
+    name: content_modify
+    selector:
+    - conversation
+    - content_modify
+    value: ''
+    value_type: string
+  environment_variables:
+  - description: ''
+    id: 1996b6f3-a38e-4041-8d7a-85328176ff94
+    name: DB_NAME
+    selector:
+    - env
+    - DB_NAME
+    value: sky_take_out
+    value_type: string
+  - description: ''
+    id: e593f790-fd60-43da-9105-909b3e1fc902
+    name: DB_PASSWORD
+    selector:
+    - env
+    - DB_PASSWORD
+    value: q75946123
+    value_type: string
+  - description: ''
+    id: 5314fe76-2d1f-4474-8748-f5926332e7b4
+    name: DB_USER
+    selector:
+    - env
+    - DB_USER
+    value: root
+    value_type: string
+  - description: ''
+    id: 1070336a-d614-4f95-b4d9-3fcb94190b01
+    name: DB_PORT
+    selector:
+    - env
+    - DB_PORT
+    value: '3306'
+    value_type: string
+  - description: ''
+    id: 64e0cc87-040d-4067-9124-a574b08884a9
+    name: DB_HOST
+    selector:
+    - env
+    - DB_HOST
+    value: 192.168.0.32
+    value_type: string
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        image_file_size_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        sourceType: llm
+        targetType: assigner
+      id: 1742268574820-source-17426938619580-target
+      selected: false
+      source: '1742268574820'
+      sourceHandle: source
+      target: '17426938619580'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: code
+        targetType: llm
+      id: 1742268541036-source-1742697648839-target
+      selected: false
+      source: '1742268541036'
+      sourceHandle: source
+      target: '1742697648839'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: llm
+        targetType: llm
+      id: 1742697648839-source-1742268574820-target
+      selected: false
+      source: '1742697648839'
+      sourceHandle: source
+      target: '1742268574820'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: code
+        targetType: assigner
+      id: 1742695585674-source-1742873522807-target
+      selected: false
+      source: '1742695585674'
+      sourceHandle: source
+      target: '1742873522807'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: assigner
+        targetType: code
+      id: 1742873006355-source-1742695585674-target
+      selected: false
+      source: '1742873006355'
+      sourceHandle: source
+      target: '1742695585674'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: assigner
+        targetType: code
+      id: 17426938619580-source-1743382507830-target
+      selected: false
+      source: '17426938619580'
+      sourceHandle: source
+      target: '1743382507830'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: code
+        targetType: assigner
+      id: 1743382507830-source-1742873006355-target
+      selected: false
+      source: '1743382507830'
+      sourceHandle: source
+      target: '1742873006355'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: start
+        targetType: if-else
+      id: 1742268499271-source-1743973729940-target
+      selected: false
+      source: '1742268499271'
+      sourceHandle: source
+      target: '1743973729940'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: question-classifier
+      id: 1743973729940-true-1742268516158-target
+      selected: false
+      source: '1743973729940'
+      sourceHandle: 'true'
+      target: '1742268516158'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: code
+      id: 1743973729940-false-1742268541036-target
+      selected: false
+      source: '1743973729940'
+      sourceHandle: 'false'
+      target: '1742268541036'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: assigner
+        targetType: question-classifier
+      id: 1742873522807-source-1742268516158-target
+      selected: false
+      source: '1742873522807'
+      sourceHandle: source
+      target: '1742268516158'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: 开始节点
+        selected: false
+        title: 开始
+        type: start
+        variables: []
+      height: 81
+      id: '1742268499271'
+      position:
+        x: -1775.3462985863632
+        y: 341.55607869345965
+      positionAbsolute:
+        x: -1775.3462985863632
+        y: 341.55607869345965
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        classes:
+        - id: '1'
+          name: 查询/分析
+        - id: '1742271280811'
+          name: 修改
+        - id: '1742272605016'
+          name: 确认/其他
+        - id: '1742436050605'
+          name: 重置
+        - id: '1742436518528'
+          name: 新增
+        - id: '1742519512976'
+          name: 删除
+        desc: 对用户问题进行分类
+        instruction: "你是一个智能分类助手。根据用户输入{{#sys.query#}}，按以下规则分类：\n\n1. **查询/分析**：检索记录或分析数据，含关键词：查询、搜索、查找、查、详情、状态、分析、统计、多少、总数等。\n\
+          \   - 示例：“查询 TKT-2307-0001 状态”“统计工单数量”\n\n2. **修改**：更改记录，含关键词：修改、更改、变更、更新。\n\
+          \   - 示例：“修改 TKT-2307-0001 状态为已解决”\n\n3. **确认/其他**：含关键词：保存、确认、是、好、确定，或无法归类。\
+          \ \n  - 示例：“保存”“是”“继续”\n\n4. **重置**：重置或清空，含关键词：重置、重新开始、清空。\n   - 示例：“重置所有数据”\n\
+          \n5. **新增**：添加新记录，含关键词：添加、新增、创建（无统计/分析词）。\n   - 示例：“新增一条工单”\n\n6. **删除**：删除记录，含关键词：删除、移除、取消。\n\
+          \   - 示例：“删除 TKT-2307-0001”\n\n**规则**：\n- 多特征冲突（如“新增并统计”），优先“查询/分析”。\n-\
+          \ “新增”若涉统计/分析，归“查询/分析”。\n- 无法判断，默认“确认/其他”。"
+        instructions: ''
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: grok-beta
+          provider: langgenius/x/x
+        query_variable_selector:
+        - '1742268499271'
+        - sys.query
+        selected: false
+        title: 问题分类器
+        topics: []
+        type: question-classifier
+        vision:
+          enabled: false
+      height: 339
+      id: '1742268516158'
+      position:
+        x: 22.04759134228425
+        y: 373.16598963654735
+      positionAbsolute:
+        x: 22.04759134228425
+        y: 373.16598963654735
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: "import urllib.request\nimport json\n\ndef main() -> dict:\n    # Flask\
+          \ 服务端点\n    api_url = \"http://192.168.0.32:5003/get_schema\"\n    \n  \
+          \  # 创建请求对象\n    req = urllib.request.Request(api_url, headers={\"Content-Type\"\
+          : \"application/json\"})\n    \n    try:\n        # 发送请求并获取响应\n        with\
+          \ urllib.request.urlopen(req) as response:\n            # 读取并解码响应\n    \
+          \        schema_data = json.loads(response.read().decode('utf-8'))\n   \
+          \         \n            # 检查 schema_data 是否为字典\n            if isinstance(schema_data,\
+          \ dict):\n                # 将 schema_data 转换为 JSON 字符串列表（与案例一致）\n      \
+          \          result_list = [json.dumps(schema_data, ensure_ascii=False)]\n\
+          \                return {'result': result_list}  # 返回字符串列表\n           \
+          \ else:\n                raise Exception(\"Unexpected response format: Expected\
+          \ a dictionary.\")\n    except Exception as e:\n        raise Exception(f\"\
+          Error: {str(e)}\")"
+        code_language: python3
+        desc: 表结构获取
+        outputs:
+          result:
+            children: null
+            type: array[string]
+        selected: false
+        title: 表结构获取（多表对应）
+        type: code
+        variables: []
+      height: 81
+      id: '1742268541036'
+      position:
+        x: -1007.4649189781278
+        y: 534.1059522402564
+      positionAbsolute:
+        x: -1007.4649189781278
+        y: 534.1059522402564
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: true
+          variable_selector:
+          - '1742268541036'
+          - result
+        desc: 整理表结构信息
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: chatgpt-4o-latest
+          provider: langgenius/openai/openai
+        prompt_template:
+        - id: 2d43387d-6324-4b7d-b074-91011da88051
+          role: system
+          text: 你是一个数据结构整理助手。
+        - id: e7c163c0-bd3b-4da9-b346-66d6e68dedff
+          role: user
+          text: '以下是从数据库获取的原始表结构 JSON 数据（可能是一个数组）：{{#context#}}
+
+            请从数组中提取第一个 JSON 字符串，并确保输出为一个完整的、有效的 JSON 对象，包含所有表结构信息。
+
+            注意：
+
+            - 输出必须是一个单一的 JSON 对象，格式为 {"table1": {...}, "table2": {...}, ...}。
+
+            - 确保每个表定义之间用逗号分隔，且整体用大括号 {} 包裹。
+
+            - 不得添加换行符、Markdown 标记（如 ```json）或其他非 JSON 字符。
+
+            - 如果输入数据量较大，优先确保 JSON 结构的完整性，避免截断。
+
+            - 如果输入无效或无法解析，返回空对象 "{}"。
+
+            - 在生成 JSON 时，逐表检查，确保每对键值对后添加逗号，最后一表除外。
+
+            示例：
+
+            - 输入：[{"clazz": {"fields": {...}}, "dept": {"fields": {...}}}]
+
+            - 输出：{"clazz": {"fields": {...}}, "dept": {"fields": {...}}}'
+        selected: false
+        title: 整理表结构信息
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 117
+      id: '1742268574820'
+      position:
+        x: -1002.3428721566297
+        y: 806.0069721571012
+      positionAbsolute:
+        x: -1002.3428721566297
+        y: 806.0069721571012
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: ''
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1742268574820'
+          - text
+          variable_selector:
+          - conversation
+          - biaojiegou_save
+          write_mode: over-write
+        selected: false
+        title: 变量赋值 3 表结构赋值
+        type: assigner
+        version: '2'
+      height: 87
+      id: '17426938619580'
+      position:
+        x: -637.2360856757366
+        y: 527.1233189382341
+      positionAbsolute:
+        x: -637.2360856757366
+        y: 527.1233189382341
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: "import urllib.request\nimport json\nimport re\n\ndef main(table_names:\
+          \ list, schema_str: str) -> dict:\n    api_url = \"http://192.168.0.32:5003/execute_query\"\
+          \n    try:\n        print(f\"table_names: {table_names}\")\n        print(f\"\
+          schema_str (raw): '{schema_str}'\")\n        if not schema_str or schema_str.strip()\
+          \ == \"\":\n            raise Exception(\"Schema string is empty\")\n\n\
+          \        # 预处理：清理并修复可能的 JSON 格式问题\n        cleaned_schema_str = schema_str.strip()\n\
+          \        # 移除 Markdown 标记和多余空白\n        cleaned_schema_str = re.sub(r'```json\\\
+          s*|\\s*```', '', cleaned_schema_str)\n        # 替换多余的换行符和空格\n        cleaned_schema_str\
+          \ = re.sub(r'\\s*\\n\\s*', '', cleaned_schema_str)\n        # 修复表定义之间的分隔符问题\n\
+          \        cleaned_schema_str = re.sub(r'}\\s*([^{,])', '}, \\\\1', cleaned_schema_str)\
+          \  # 添加缺失的逗号\n        cleaned_schema_str = re.sub(r'}{', '}, {', cleaned_schema_str)\
+          \  # 修复无逗号的拼接\n        # 确保整体是一个对象\n        if not cleaned_schema_str.startswith('{'):\n\
+          \            cleaned_schema_str = '{' + cleaned_schema_str\n        if not\
+          \ cleaned_schema_str.endswith('}'):\n            cleaned_schema_str = cleaned_schema_str\
+          \ + '}'\n        # 移除末尾多余的逗号\n        cleaned_schema_str = re.sub(r',\\\
+          s*}', '}', cleaned_schema_str)\n\n        print(f\"Cleaned schema_str: '{cleaned_schema_str}'\"\
+          )\n        try:\n            schema = json.loads(cleaned_schema_str)\n \
+          \           print(f\"Parsed schema: {schema}\")\n        except json.JSONDecodeError\
+          \ as e:\n            print(f\"JSON decode error at position {e.pos}: {e.msg}\"\
+          )\n            print(f\"Problematic snippet: '{cleaned_schema_str[max(0,\
+          \ e.pos-10):e.pos+10]}'\")\n            # 尝试逐步截断修复\n            try:\n \
+          \               last_valid_pos = cleaned_schema_str.rfind('}', 0, e.pos)\
+          \ + 1\n                if last_valid_pos > 1:\n                    cleaned_schema_str\
+          \ = cleaned_schema_str[:last_valid_pos]\n                    schema = json.loads(cleaned_schema_str)\n\
+          \                    print(f\"Recovered partial schema: {schema}\")\n  \
+          \              else:\n                    raise Exception(\"Unable to recover\
+          \ valid JSON\")\n            except Exception:\n                schema =\
+          \ {}  # 最终 fallback 到空对象\n                print(\"Fallback to empty schema\"\
+          )\n\n        result_data = {}\n        for table in table_names:\n     \
+          \       sql_query = f\"SELECT * FROM {table} LIMIT 1\"\n            print(f\"\
+          SQL query for {table}: {sql_query}\")\n            payload = {\"sql_query\"\
+          : sql_query}\n            data = json.dumps(payload).encode('utf-8')\n \
+          \           req = urllib.request.Request(api_url, data=data, headers={\"\
+          Content-Type\": \"application/json\"})\n            with urllib.request.urlopen(req)\
+          \ as response:\n                table_data = json.loads(response.read().decode('utf-8'))\n\
+          \                result_data[table] = table_data\n\n        result_str =\
+          \ json.dumps(result_data, ensure_ascii=False)\n        return {'result':\
+          \ result_str}\n    except Exception as e:\n        raise Exception(f\"Error:\
+          \ {str(e)}\")"
+        code_language: python3
+        desc: 返回数据库的一条数据作为示例给LLM（暂时是硬编码）
+        outputs:
+          result:
+            children: null
+            type: string
+        selected: false
+        title: 数据示例
+        type: code
+        variables:
+        - value_selector:
+          - '1743382507830'
+          - result
+          variable: table_names
+        - value_selector:
+          - '1742268574820'
+          - text
+          variable: schema_str
+      height: 97
+      id: '1742695585674'
+      position:
+        x: -267.99524063399167
+        y: 671.1233189382341
+      positionAbsolute:
+        x: -267.99524063399167
+        y: 671.1233189382341
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: true
+          variable_selector:
+          - '1742268541036'
+          - result
+        desc: ''
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: gpt-4o-mini
+          provider: langgenius/openai/openai
+        prompt_template:
+        - id: e0a4fb31-f74d-4dcd-816c-c2d2da20e271
+          role: system
+          text: '根据以下从数据库获取的表结构 JSON 数据：{{#context#}}，提取所有表名，遵循以下规则：
+
+            1. 从 JSON 数据中识别所有表名（JSON 对象的顶级键）。
+
+            2. 输出纯文本表名列表，每行一个表名，不带任何符号（如引号、花括号、冒号等）。
+
+            3. 不添加额外说明或标记（如 ```）。
+
+
+            示例：
+
+            - 输入：
+
+            {"result": ["{\"tickets\": {\"fields\": {\"ticket_id\": {\"type\": \"varchar(20)\"}}},
+            \"customers\": {\"fields\": {\"customer_id\": {\"type\": \"int\"}}}}"]}
+
+            - 输出：
+
+            tickets
+
+            customers
+
+
+            表结构数据：{{#context#}}'
+        selected: false
+        title: 获取表名
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 89
+      id: '1742697648839'
+      position:
+        x: -1007.4649189781278
+        y: 671.1233189382341
+      positionAbsolute:
+        x: -1007.4649189781278
+        y: 671.1233189382341
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: ''
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1743382507830'
+          - result
+          variable_selector:
+          - conversation
+          - table_names
+          write_mode: over-write
+        selected: false
+        title: 变量赋值 - 获取表名
+        type: assigner
+        version: '2'
+      height: 87
+      id: '1742873006355'
+      position:
+        x: -645.8552699732197
+        y: 833.8192642709555
+      positionAbsolute:
+        x: -645.8552699732197
+        y: 833.8192642709555
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: ''
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1742695585674'
+          - result
+          variable_selector:
+          - conversation
+          - data_sample
+          write_mode: over-write
+        selected: false
+        title: 变量赋值  - 数据示例
+        type: assigner
+        version: '2'
+      height: 87
+      id: '1742873522807'
+      position:
+        x: -267.99524063399167
+        y: 527.1233189382341
+      positionAbsolute:
+        x: -267.99524063399167
+        y: 527.1233189382341
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: "def main(table_names_str: str) -> dict:\n    # 将换行符分隔的字符串拆分为数组，去除空行和多余空格\n\
+          \    table_names = [name.strip() for name in table_names_str.split('\\n')\
+          \ if name.strip()]\n    return {\"result\": table_names}"
+        code_language: python3
+        desc: ''
+        outputs:
+          result:
+            children: null
+            type: array[string]
+        selected: false
+        title: 转换数组
+        type: code
+        variables:
+        - value_selector:
+          - '1742697648839'
+          - text
+          variable: table_names_str
+      height: 53
+      id: '1743382507830'
+      position:
+        x: -637.2360856757366
+        y: 706.3664139704869
+      positionAbsolute:
+        x: -637.2360856757366
+        y: 706.3664139704869
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: not empty
+            id: 4dddf4e3-6f03-4e2e-9237-472f2105f08b
+            value: ''
+            varType: string
+            variable_selector:
+            - conversation
+            - biaojiegou_save
+          - comparison_operator: not empty
+            id: b53a77ff-cc6c-4857-9749-908849cec4f9
+            value: ''
+            varType: array[string]
+            variable_selector:
+            - conversation
+            - table_names
+          - comparison_operator: not empty
+            id: 5cf730da-6054-4354-ac8b-b67f56124be3
+            value: ''
+            varType: string
+            variable_selector:
+            - conversation
+            - data_sample
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支 - 事前作业确认
+        type: if-else
+      height: 177
+      id: '1743973729940'
+      position:
+        x: -1362.5362998966607
+        y: 341.55607869345965
+      positionAbsolute:
+        x: -1362.5362998966607
+        y: 341.55607869345965
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    viewport:
+      x: 751.8127325129726
+      y: 370.9862638414409
+      zoom: 0.3789291416275998
