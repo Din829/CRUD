@@ -1,6 +1,6 @@
 # graph_builder.py: 构建 LangGraph 图，定义节点和边。
 
-from langgraph.graph import StatefulGraph, END
+from langgraph.graph import StateGraph, END
 from typing import Dict, Any
 
 # 导入状态定义和节点函数
@@ -36,14 +36,14 @@ def error_handling_placeholder_node(state: GraphState) -> Dict[str, Any]:
     print(f"捕获到错误: {error}")
     return {"final_answer": f"处理过程中遇到错误: {error}"} # 直接将错误信息返回给用户
 
-# --- 构建图 --- 
-def build_graph() -> StatefulGraph:
+# --- 构建图 ---
+def build_graph() -> StateGraph:
     """构建并返回 LangGraph 应用的图实例。"""
-    graph = StatefulGraph(GraphState)
+    graph = StateGraph(GraphState)
 
     # --- 添加节点 ---
     # 初始化流程节点
-    graph.add_node("route_initialization", routers.route_initialization)
+    graph.add_node("route_initialization_node", routers.route_initialization_node)
     graph.add_node("fetch_schema", actions.fetch_schema_action)
     graph.add_node("extract_table_names", actions.extract_table_names_action)
     graph.add_node("process_table_names", actions.process_table_names_action)
@@ -55,14 +55,14 @@ def build_graph() -> StatefulGraph:
     graph.add_node("handle_init_error", error_handling_placeholder_node)
 
     # --- 设置入口点 ---
-    graph.set_entry_point("route_initialization")
+    graph.set_entry_point("route_initialization_node")
 
     # --- 添加边 ---
     # 初始化路由
     graph.add_conditional_edges(
-        "route_initialization",
-        # 路由函数 route_initialization 本身返回的就是下一跳的名称
-        routers.route_initialization,
+        "route_initialization_node",
+        # Use the dedicated routing logic function
+        routers._get_initialization_route,
         {
             "start_initialization": "fetch_schema",
             "continue_to_main_flow": "main_flow_entry", # 直接跳到主流程 (占位符)

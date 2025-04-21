@@ -78,8 +78,10 @@ def process_table_names_action(state: GraphState) -> Dict[str, Any]:
     print("---节点: 处理表名列表---")
     raw_names = state.get("raw_table_names_str", "") # 从状态获取，默认为空字符串
     table_list = data_processor.nl_string_to_list(raw_names)
-    print(f"处理后的表名列表: {table_list}")
-    return {"table_names": table_list} # 即使列表为空也更新
+    # 清理可能由 LLM 添加的 markdown 代码块标记
+    cleaned_list = [name for name in table_list if name.strip() != '```']
+    print(f"处理后的表名列表: {cleaned_list}")
+    return {"table_names": cleaned_list} # 即使列表为空也更新
 
 def format_schema_action(state: GraphState) -> Dict[str, Any]:
     """

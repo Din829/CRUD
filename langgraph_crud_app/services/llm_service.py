@@ -1,20 +1,30 @@
 # llm_service.py: 提供与不同 LLM 交互的统一接口。
 
 from typing import List, Optional
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 # 假设您已为您的 LLM 提供商配置了 LangChain 环境变量 (例如 OPENAI_API_KEY)
 # 或者您可以在此处显式初始化模型，可能从 config/settings.py 加载
 from langchain_openai import ChatOpenAI # 示例提供商，根据 Dify 插件 (grok-beta, chatgpt) 需要进行调整
 # from langchain_anthropic import ChatAnthropic # 如果通过 'langgenius/x' 使用 Anthropic 模型
 # from langchain_google_genai import ChatGoogleGenerativeAI # 如果使用 Gemini 模型
+import os # Import os module to access environment variables
 
 # --- LLM 初始化 (使用 OpenAI 示例) ---
 # TODO: 通过 config/settings.py 使模型选择可配置
 # 注意: Dify 使用特定的提供商，如 'langgenius/openai/openai' 和 'langgenius/x/x' (Grok)
 # 我们将在这里使用标准的 LangChain 集成。如果需要直接的提供商映射，请进行调整。
-llm_gpt4o_mini = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
-llm_gpt4o_latest = ChatOpenAI(model="gpt-4o", temperature=0.7) # 假设 'chatgpt-4o-latest' 映射到 gpt-4o
+
+
+# Use the model identifier specified by the user
+# llm_gpt4o_latest = ChatOpenAI(model="gpt-4o", temperature=0.7)
+# llm_gpt4_1 = ChatOpenAI(model="gpt-4.1", temperature=0.7)
+# Rely on default environment variable handling by ChatOpenAI
+llm_gpt4_1 = ChatOpenAI(model="gpt-4.1", temperature=0.7)
+
+# Update other variables to point to the new instance for consistency
+llm_gpt4o_latest = llm_gpt4_1
+llm_gpt4o_mini = llm_gpt4_1
 
 # --- 服务函数 ---
 
@@ -36,30 +46,23 @@ def extract_table_names(schema_json_array: List[str]) -> str:
     # 确保我们使用的是 JSON 字符串内容，而不是列表本身
     context = schema_json_array[0] if schema_json_array else "{}"
 
-    # 基于 Dify 节点 '1742697648839' (gpt-4o-mini) 的提示
+    # 简化 Prompt 并尝试使用 gpt-4o
     prompt_template = ChatPromptTemplate.from_messages([
-        ("system", """根据以下从数据库获取的表结构 JSON 数据：{{context}}，提取所有表名，遵循以下规则：
-
-1. 从 JSON 数据中识别所有表名（JSON 对象的顶级键）。
-2. 输出纯文本表名列表，每行一个表名，不带任何符号（如引号、花括号、冒号等）。
-3. 不添加额外说明或标记（如 ```）。
-
-示例：
-- 输入：
-{"result": ["{\"tickets\": {\"fields\": {\"ticket_id\": {\"type\": \"varchar(20)\"}}}, \"customers\": {\"fields\": {\"customer_id\": {\"type\": \"int\"}}}}"]}
-- 输出：
-tickets
-customers
-"""),
-        ("user", "表结构数据：{{context}}")
+        ("system", "你的任务是从给定的 JSON 字符串中提取所有顶级键。这些顶级键代表数据库表名。"),
+        ("user", "这是 JSON 字符串: \n{context}\n请提取所有顶级键（表名），每行一个，只输出纯文本表名，不要任何其他文字或标记。")
     ])
 
-    chain = prompt_template | llm_gpt4o_mini | StrOutputParser()
+    # 使用指定模型 gpt-4.1
+    chain = prompt_template | llm_gpt4_1 | StrOutputParser()
 
     try:
         result = chain.invoke({"context": context})
         # 基本清理：移除每行潜在的前导/尾随空格，以符合 nl_string_to_list 的预期
         cleaned_result = "\n".join([line.strip() for line in result.strip().split('\n')])
+        # 增加检查，如果 LLM 返回错误信息，则返回空字符串
+        if "抱歉" in cleaned_result or "无法" in cleaned_result or not cleaned_result:
+             print(f"警告: LLM extract_table_names 未能提取有效表名，返回: {cleaned_result}")
+             return ""
         return cleaned_result
     except Exception as e:
         print(f"调用 LLM 进行 extract_table_names 时出错: {e}")
@@ -85,28 +88,13 @@ def format_schema(schema_json_array: List[str]) -> str:
     # 确保我们使用的是 JSON 字符串内容
     context = schema_json_array[0] if schema_json_array else "{}"
 
-    # 基于 Dify 节点 '1742268574820' (chatgpt-4o-latest) 的提示
-    prompt_template = ChatPromptTemplate.from_messages([
-        ("system", "你是一个数据结构整理助手。") ,
-        ("user", """以下是从数据库获取的原始表结构 JSON 数据（可能是一个数组）：{{context}}
+    # 改用 PromptTemplate 并极度简化
+    template = """输入是一个 JSON 字符串: {context}
+请将这个输入的 JSON 字符串原样输出，确保它是一个有效的 JSON 对象。不要添加任何其他文字或标记。如果输入无效或无法处理，输出空 JSON 对象字符串 {{}}。"""
+    prompt_template = PromptTemplate.from_template(template)
 
-请从数组中提取第一个 JSON 字符串，并确保输出为一个完整的、有效的 JSON 对象，包含所有表结构信息。
-
-注意：
-- 输出必须是一个单一的 JSON 对象，格式为 {"table1": {...}, "table2": {...}, ...}。
-- 确保每个表定义之间用逗号分隔，且整体用大括号 {} 包裹。
-- 不得添加换行符、Markdown 标记（如 ```json）或其他非 JSON 字符。
-- 如果输入数据量较大，优先确保 JSON 结构的完整性，避免截断。
-- 如果输入无效或无法解析，返回空对象 \"{}\"。
-- 在生成 JSON 时，逐表检查，确保每对键值对后添加逗号，最后一表除外。
-
-示例：
-- 输入：[{"clazz": {"fields": {...}}, "dept": {"fields": {...}}}]
-- 输出：{"clazz": {"fields": {...}}, "dept": {"fields": {...}}}
-""")
-    ])
-
-    chain = prompt_template | llm_gpt4o_latest | StrOutputParser()
+    # 使用指定模型 gpt-4.1
+    chain = prompt_template | llm_gpt4_1 | StrOutputParser()
 
     try:
         result = chain.invoke({"context": context})

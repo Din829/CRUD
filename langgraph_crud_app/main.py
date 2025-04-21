@@ -2,10 +2,13 @@
 
 import sys
 import os
+# Correct import path after installing langgraph-checkpoint-sqlite
 from langgraph.checkpoint.sqlite import SqliteSaver # 用于持久化状态
 
 # 确保证项目根目录在 Python 路径中，以便绝对导入能够工作
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))
+# project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))
+# Add the parent directory (DifyLang) to sys.path instead
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -19,10 +22,12 @@ def main():
 
     # 设置检查点 (用于持久化状态，这里使用 SQLite)
     # 这允许图在多次调用之间保持其状态 (例如 biaojiegou_save)
-    memory = SqliteSaver.from_conn_string(":memory:") # 使用内存数据库进行简单测试
+    # memory = SqliteSaver.from_conn_string(":memory:") # 使用内存数据库进行简单测试
     # 对于持久化存储，可以使用文件路径: SqliteSaver.from_conn_string("checkpoints.sqlite")
 
-    print("编译 LangGraph 图...")
+    # 使用 'with' 语句获取实际的 checkpointer 实例
+    with SqliteSaver.from_conn_string(":memory:") as memory:
+     print("编译 LangGraph 图...")
     # runnable = graph_builder.compile()
     # 使用检查点进行编译
     runnable = graph_builder.compile(checkpointer=memory)

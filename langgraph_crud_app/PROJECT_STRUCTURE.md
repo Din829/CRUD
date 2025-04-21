@@ -6,7 +6,7 @@ langgraph_crud_app/
 │
 ├── nodes/                  # LangGraph 节点函数 (负责流程编排和调用 services)
 │   ├── __init__.py         # 初始化模块
-│   ├── routers.py          # 存放主要负责条件判断和流程路由的节点函数
+│   ├── routers.py          # 存放流程路由的逻辑函数及执行路由动作的节点
 │   └── actions.py          # 存放执行具体动作 (调用 services) 的节点函数
 │
 ├── services/               # 可重用的业务逻辑和与外部系统的交互层
@@ -20,6 +20,6 @@ langgraph_crud_app/
 │   ├── __init__.py
 │   └── settings.py         # 数据库连接信息, API Keys 等
 │
-├── main.py                 # 应用主入口 (保持不变)
-├── requirements.txt        # 项目依赖 (保持不变)
+├── main.py                 # 应用主入口
+├── requirements.txt        # 项目依赖 (包含 LangGraph 检查点库)
 └── README.md               # 项目说明 (保持不变) 
