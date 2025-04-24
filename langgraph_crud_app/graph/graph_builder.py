@@ -1,40 +1,20 @@
 # graph_builder.py: 构建 LangGraph 图，定义节点和边。
 
 from langgraph.graph import StateGraph, END
-from typing import Dict, Any
+from typing import Dict, Any, Literal
 
 # 导入状态定义和节点函数
-# 使用绝对导入路径
 from langgraph_crud_app.graph.state import GraphState
-from langgraph_crud_app.nodes import actions, routers
+# 修改导入: 从新的 actions 文件和 routers 导入
+from langgraph_crud_app.nodes import routers # routers 不变
+from langgraph_crud_app.nodes import preprocessing_actions, query_actions, flow_control_actions
 
 # --- 占位符节点 (用于连接尚未实现的主流程和错误处理) ---
-
-def main_flow_placeholder_node(state: GraphState) -> Dict[str, Any]:
-    """
-    主流程入口的占位符节点。
-    实际应用中，这里会连接到第一个主流程节点 (例如意图分类)。
-    """
-    print("---节点: 进入主流程 (占位符)---")
-    # 可以选择在这里清除初始化过程中的中间状态
-    # return {
-    #     "raw_schema_result": None,
-    #     "raw_table_names_str": None,
-    #     "error_message": None # 清除可能由初始化成功路径产生的非致命错误
-    # }
-    # 或者，暂时只打印信息并结束
-    print(f"当前状态重要信息: Schema={state.get('biaojiegou_save') is not None}, 表名={state.get('table_names')}, 数据示例={state.get('data_sample') is not None}")
-    return {"final_answer": "初始化完成，准备进入主流程。"} # 暂时返回一个消息
-
-def error_handling_placeholder_node(state: GraphState) -> Dict[str, Any]:
-    """
-    错误处理流程的占位符节点。
-    实际应用中，这里可以实现更复杂的错误处理逻辑，例如通知用户或尝试恢复。
-    """
-    print("---节点: 处理错误 (占位符)---")
-    error = state.get("error_message", "未知错误")
-    print(f"捕获到错误: {error}")
-    return {"final_answer": f"处理过程中遇到错误: {error}"} # 直接将错误信息返回给用户
+# 移除旧的 main_flow_placeholder_node 和 error_handling_placeholder_node
+# def main_flow_placeholder_node(state: GraphState) -> Dict[str, Any]:
+#     ...
+# def error_handling_placeholder_node(state: GraphState) -> Dict[str, Any]:
+#     ...
 
 # --- 构建图 ---
 def build_graph() -> StateGraph:
@@ -42,51 +22,138 @@ def build_graph() -> StateGraph:
     graph = StateGraph(GraphState)
 
     # --- 添加节点 ---
-    # 初始化流程节点
+    # 初始化流程节点 (从 preprocessing_actions 导入)
     graph.add_node("route_initialization_node", routers.route_initialization_node)
-    graph.add_node("fetch_schema", actions.fetch_schema_action)
-    graph.add_node("extract_table_names", actions.extract_table_names_action)
-    graph.add_node("process_table_names", actions.process_table_names_action)
-    graph.add_node("format_schema", actions.format_schema_action)
-    graph.add_node("fetch_sample_data", actions.fetch_sample_data_action)
+    graph.add_node("fetch_schema", preprocessing_actions.fetch_schema_action)
+    graph.add_node("extract_table_names", preprocessing_actions.extract_table_names_action)
+    graph.add_node("process_table_names", preprocessing_actions.process_table_names_action)
+    graph.add_node("format_schema", preprocessing_actions.format_schema_action)
+    graph.add_node("fetch_sample_data", preprocessing_actions.fetch_sample_data_action)
+    # handle_init_error 节点现在需要定义或使用一个实际的错误处理节点
+    # 暂时先指向一个简单的占位符或 END
+    # graph.add_node("handle_init_error", actions.handle_clarify_query_action) # 复用澄清节点作为初始化错误处理
+    # 暂时定义一个简单的初始化错误处理节点
+    graph.add_node("handle_init_error", lambda state: {"final_answer": f"初始化错误: {state.get('error_message', '未知错误')}"})
 
-    # 占位符节点
-    graph.add_node("main_flow_entry", main_flow_placeholder_node)
-    graph.add_node("handle_init_error", error_handling_placeholder_node)
+    # 主流程路由节点 (从 routers 导入)
+    graph.add_node("classify_main_intent_node", routers.classify_main_intent_node)
+    graph.add_node("classify_query_analysis_node", routers.classify_query_analysis_node)
+    graph.add_node("route_after_query_execution", routers.route_after_query_execution_node)
+
+    # 主流程控制动作节点 (从 flow_control_actions 导入)
+    graph.add_node("handle_reset", flow_control_actions.handle_reset_action)
+    graph.add_node("handle_modify_intent", flow_control_actions.handle_modify_intent_action)
+    graph.add_node("handle_add_intent", flow_control_actions.handle_add_intent_action)
+    graph.add_node("handle_delete_intent", flow_control_actions.handle_delete_intent_action)
+    graph.add_node("handle_confirm_other", flow_control_actions.handle_confirm_other_action)
+
+    # 查询/分析 动作节点 (从 query_actions 导入)
+    graph.add_node("generate_select_sql", query_actions.generate_select_sql_action)
+    graph.add_node("generate_analysis_sql", query_actions.generate_analysis_sql_action)
+    graph.add_node("clean_sql", query_actions.clean_sql_action)
+    graph.add_node("execute_sql_query", query_actions.execute_sql_query_action)
+    graph.add_node("format_query_result", query_actions.format_query_result_action)
+    graph.add_node("analyze_analysis_result", query_actions.analyze_analysis_result_action)
+    graph.add_node("handle_clarify_query", query_actions.handle_clarify_query_action)
+    graph.add_node("handle_clarify_analysis", query_actions.handle_clarify_analysis_action)
+    graph.add_node("handle_query_not_found", query_actions.handle_query_not_found_action)
+    graph.add_node("handle_analysis_no_data", query_actions.handle_analysis_no_data_action)
 
     # --- 设置入口点 ---
     graph.set_entry_point("route_initialization_node")
 
     # --- 添加边 ---
-    # 初始化路由
+    # 初始化路由 (router 逻辑不变)
     graph.add_conditional_edges(
         "route_initialization_node",
-        # Use the dedicated routing logic function
         routers._get_initialization_route,
         {
             "start_initialization": "fetch_schema",
-            "continue_to_main_flow": "main_flow_entry", # 直接跳到主流程 (占位符)
-            "handle_error": "handle_init_error"       # 进入错误处理 (占位符)
+            "continue_to_main_flow": "classify_main_intent_node",
+            "handle_error": "handle_init_error"
         }
     )
 
-    # 初始化流程顺序边
+    # 初始化流程顺序边 (节点名不变)
     graph.add_edge("fetch_schema", "extract_table_names")
     graph.add_edge("extract_table_names", "process_table_names")
     graph.add_edge("process_table_names", "format_schema")
     graph.add_edge("format_schema", "fetch_sample_data")
+    graph.add_edge("fetch_sample_data", "classify_main_intent_node")
 
-    # 初始化成功后，进入主流程
-    # 注意：这里假设 fetch_sample_data 成功后总是进入主流程
-    # 如果 fetch_sample_data 可能产生需要特殊处理的错误，可以在其后添加路由
-    graph.add_edge("fetch_sample_data", "main_flow_entry")
+    # 主意图路由 (router 逻辑和节点名不变)
+    graph.add_conditional_edges(
+        "classify_main_intent_node",
+        routers._route_after_main_intent,
+        {
+            "classify_query_analysis_node": "classify_query_analysis_node",
+            "handle_modify_intent": "handle_modify_intent",
+            "handle_add_intent": "handle_add_intent",
+            "handle_delete_intent": "handle_delete_intent",
+            "handle_reset": "handle_reset",
+            "handle_confirm_other": "handle_confirm_other"
+        }
+    )
 
-    # 错误处理流程的结束点 (或者可以连接到其他恢复逻辑)
+    # 查询/分析 子意图路由 (router 逻辑和节点名不变)
+    graph.add_conditional_edges(
+        "classify_query_analysis_node",
+        routers._route_query_or_analysis,
+        {
+            "generate_select_sql": "generate_select_sql",
+            "generate_analysis_sql": "generate_analysis_sql"
+        }
+    )
+
+    # SQL 生成后进行清理 (需要定义路由逻辑函数)
+    def _route_after_sql_generation(state: GraphState) -> Literal["clean_sql", "handle_clarify_query", "handle_clarify_analysis"]:
+        if state.get("final_answer"):
+            intent = state.get("query_analysis_intent", "query")
+            if intent == "analysis":
+                return "handle_clarify_analysis"
+            else:
+                return "handle_clarify_query"
+        else:
+            return "clean_sql"
+    graph.add_conditional_edges("generate_select_sql", _route_after_sql_generation)
+    graph.add_conditional_edges("generate_analysis_sql", _route_after_sql_generation)
+
+    # 清理 SQL 后执行查询 (节点名不变)
+    graph.add_edge("clean_sql", "execute_sql_query")
+
+    # 执行 SQL 后进行路由判断 (节点名不变)
+    graph.add_edge("execute_sql_query", "route_after_query_execution")
+
+    # 根据 SQL 执行结果路由到最终处理或回复节点 (router 逻辑和节点名不变)
+    graph.add_conditional_edges(
+        "route_after_query_execution",
+        routers._route_after_query_execution,
+        {
+            "format_query_result": "format_query_result",
+            "analyze_analysis_result": "analyze_analysis_result",
+            "handle_query_not_found": "handle_query_not_found",
+            "handle_analysis_no_data": "handle_analysis_no_data",
+            "handle_clarify_query": "handle_clarify_query",
+            "handle_clarify_analysis": "handle_clarify_analysis"
+        }
+    )
+
+    # 各分支结束点 (节点名不变)
     graph.add_edge("handle_init_error", END)
-    # 主流程占位符的结束点 (实际会连接到后续节点)
-    graph.add_edge("main_flow_entry", END)
+    graph.add_edge("handle_reset", END)
+    graph.add_edge("handle_modify_intent", END)
+    graph.add_edge("handle_add_intent", END)
+    graph.add_edge("handle_delete_intent", END)
+    graph.add_edge("handle_confirm_other", END)
+    graph.add_edge("handle_clarify_query", END)
+    graph.add_edge("handle_clarify_analysis", END)
+    graph.add_edge("handle_query_not_found", END)
+    graph.add_edge("handle_analysis_no_data", END)
+    graph.add_edge("format_query_result", END)
+    graph.add_edge("analyze_analysis_result", END)
 
-    # --- 编译图 --- (通常在 main.py 或应用入口处完成)
-    # app = graph.compile()
-    # return app
-    return graph # 返回未编译的图，以便在 main.py 中编译 
+    return graph # 返回未编译的图
+
+# --- 编译图 --- (通常在 main.py 或应用入口处完成)
+# app = graph.compile()
+# return app 

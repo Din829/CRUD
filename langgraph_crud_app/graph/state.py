@@ -27,9 +27,13 @@ class GraphState(TypedDict):
     raw_schema_result: Optional[List[str]] # 来自 /get_schema API 的原始结果 (Dify 节点 '1742268541036' 的输出)
     raw_table_names_str: Optional[str]   # 来自 LLM 的原始表名字符串 (Dify 节点 '1742697648839' 的输出)
 
-    # --- 查询结果的中间状态 (字符串格式，镜像 Dify) ---
+    # --- 查询/分析 过程的中间状态 ---
     sql_query_generated: Optional[str]   # LLM 生成的 SQL 查询 (Dify 节点 '1742268678777' 或类似的输出)
     sql_result: Optional[str]            # 来自 /execute_query API 的结果 (JSON 字符串) (Dify 节点 '1742268852484' 的输出)
+
+    # --- 路由控制状态 ---
+    main_intent: Optional[str]           # 主意图分类结果 (e.g., "query_analysis", "modify", "reset")
+    query_analysis_intent: Optional[str] # 查询/分析子意图分类结果 (e.g., "query", "analysis")
 
     # --- API 调用前 LLM 生成的中间状态 ---
     # (目前使用 lastest_content_production 和 delete_array, 镜像 Dify 的变量用法)

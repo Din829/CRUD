@@ -1,0 +1,101 @@
+目标:
+处理用户输入的查询或分析请求，生成相应的 SQL 语句，执行查询，并将结果以友好的方式返回给用户。
+
+入口:
+在 LangGraph 初始化流程 (`route_initialization_node` -> `_get_initialization_route`) 确认元数据 (`biaojiegou_save`, `table_names`, `data_sample`) 存在且无错误后，如果主意图被分类为 "查询/分析" (`query_analysis`)，则进入此流程。
+
+流程步骤:
+
+1.  **查询/分析 子意图分类 (`classify_query_analysis_node` 节点):**
+    *   调用 `llm_query_service.classify_query_analysis_intent` 函数处理用户原始查询 (`query`)。
+    *   将用户意图进一步细分为 "查询 (`query`)" 或 "分析 (`analysis`)"。
+    *   将分类结果存储在状态的 `query_analysis_intent` 字段中。
+    *   对应 Dify 节点: '1743298467743'。
+
+2.  **子意图路由 (`_route_query_or_analysis` 路由逻辑):**
+    *   根据 `query_analysis_intent` 的值进行路由：
+        *   如果为 `"analysis"`，跳转到 `generate_analysis_sql` 节点。
+        *   如果为 `"query"` (或默认/错误)，跳转到 `generate_select_sql` 节点。
+
+3.  **SQL 生成 (分支):**
+    *   **a. 生成 SELECT SQL (`generate_select_sql` 节点):**
+        *   调用 `llm_query_service.generate_select_sql` 函数。
+        *   输入: 用户查询 (`query`), Schema (`biaojiegou_save`), 表名列表 (`table_names`), 数据示例 (`data_sample`)。
+        *   输出: 生成的 SELECT SQL 语句，或表示需要澄清的错误消息 ("ERROR: ...")。
+        *   结果存储在 `sql_query_generated` 状态字段，错误信息（如有）存储在 `final_answer` 和 `error_message`。
+        *   对应 Dify 节点: '1742268678777'。
+    *   **b. 生成分析 SQL (`generate_analysis_sql` 节点):**
+        *   调用 `llm_query_service.generate_analysis_sql` 函数。
+        *   输入: 同上。
+        *   输出: 生成的分析 SQL 语句 (含 COUNT, GROUP BY 等)，或表示需要澄清的错误消息 ("ERROR: ...")。
+        *   结果存储和错误处理同上。
+        *   对应 Dify 节点: '1743298593001'。
+
+4.  **SQL 生成后路由 (`_route_after_sql_generation` 路由逻辑):**
+    *   检查上一步 SQL 生成的结果。
+    *   **情况一：生成失败或请求澄清:** 如果 `final_answer` 字段在上一步被设置（包含 "ERROR: ..." 消息），则根据 `query_analysis_intent` 路由到：
+        *   `handle_clarify_query` (查询意图)
+        *   `handle_clarify_analysis` (分析意图)
+    *   **情况二：生成成功:** 如果 `final_answer` 为空，则路由到 `clean_sql` 节点。
+
+5.  **SQL 清理 (`clean_sql` 节点):**
+    *   调用 `data_processor.clean_sql_string` 函数处理 `sql_query_generated` 中的 SQL 语句。
+    *   移除 Markdown 标记、多余换行符和空格。
+    *   将清理后的 SQL 更新回 `sql_query_generated` 状态字段。
+    *   对应 Dify 节点: '1742268810496' 和 '17432988044960'。
+
+6.  **执行 SQL 查询 (`execute_sql_query` 节点):**
+    *   调用 `api_client.execute_query` 函数，使用清理后的 `sql_query_generated`。
+    *   将 API 返回的 JSON 结果字符串存储在 `sql_result` 状态字段。
+    *   如果 API 调用成功，清除 `error_message` 和 `final_answer`。
+    *   如果 API 调用失败，记录错误到 `error_message`，并根据意图设置请求澄清的 `final_answer`。
+    *   对应 Dify 节点: '1742268852484' 和 '17432988291020'。
+
+7.  **SQL 执行后准备路由 (`route_after_query_execution_node` 节点):**
+    *   仅作为连接点，打印当前状态（错误和结果），准备进行下一步路由。
+
+8.  **SQL 执行后路由 (`_route_after_query_execution` 路由逻辑):**
+    *   检查 `error_message` 和 `sql_result` 的状态。
+    *   **情况一：执行失败:** 如果 `error_message` 存在，根据 `query_analysis_intent` 路由到：
+        *   `handle_clarify_analysis` (分析意图)
+        *   `handle_clarify_query` (查询意图)
+    *   **情况二：执行成功但结果为空:** 调用 `data_processor.is_query_result_empty` 检查 `sql_result`。如果为空，根据 `query_analysis_intent` 路由到：
+        *   `handle_analysis_no_data` (分析意图)
+        *   `handle_query_not_found` (查询意图)
+    *   **情况三：执行成功且有结果:** 如果 `sql_result` 非空，根据 `query_analysis_intent` 路由到：
+        *   `analyze_analysis_result` (分析意图)
+        *   `format_query_result` (查询意图)
+
+9.  **最终处理/回复 (分支):**
+    *   **a. 处理查询结果 (`format_query_result` 节点):**
+        *   调用 `llm_query_service.format_query_result` 函数。
+        *   输入: 用户查询 (`query`), SQL 结果 (`sql_result`)。
+        *   输出: 格式化后的用户友好回复。
+        *   将结果存储在 `final_answer` 中。
+        *   对应 Dify 节点: '1742434616785'。
+        *   流程结束 (END)。
+    *   **b. 分析分析结果 (`analyze_analysis_result` 节点):**
+        *   调用 `llm_query_service.analyze_analysis_result` 函数。
+        *   输入: 用户查询 (`query`), SQL 结果 (`sql_result`), Schema (`biaojiegou_save`), 表名列表 (`table_names`)。
+        *   输出: 包含总结、洞察和建议的分析报告。
+        *   将结果存储在 `final_answer` 中。
+        *   对应 Dify 节点: '1743298860520'。
+        *   流程结束 (END)。
+    *   **c. 处理查询未找到 (`handle_query_not_found` 节点):**
+        *   设置固定的 `final_answer`: "没有找到您想查找的数据..."。
+        *   对应 Dify 节点: '1742269194306'。
+        *   流程结束 (END)。
+    *   **d. 处理分析无数据 (`handle_analysis_no_data` 节点):**
+        *   设置固定的 `final_answer`: "根据您的条件分析，没有找到相关数据。"。
+        *   流程结束 (END)。
+    *   **e. 请求澄清查询 (`handle_clarify_query` 节点):**
+        *   获取之前步骤设置的 `final_answer` (错误信息或澄清请求)。
+        *   对应 Dify 节点: '1742433373758'。
+        *   流程结束 (END)。
+    *   **f. 请求澄清分析 (`handle_clarify_analysis` 节点):**
+        *   获取之前步骤设置的 `final_answer` (错误信息或澄清请求)。
+        *   对应 Dify 节点: '1743299887071'。
+        *   流程结束 (END)。
+
+总结:
+该流程实现了对用户查询和分析请求的完整处理闭环，包括意图理解、SQL生成、数据库交互、错误处理和结果呈现。 
