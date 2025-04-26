@@ -3,15 +3,19 @@
 import json
 from typing import Dict, Any, List
 
-# 导入状态定义和所需的服务函数
+# 导入状态定义、API 客户端、LLM 服务和数据处理
 from langgraph_crud_app.graph.state import GraphState
-from langgraph_crud_app.services import api_client, data_processor
-from langgraph_crud_app.services import llm_preprocessing_service # 仅导入前置处理服务
+from langgraph_crud_app.services import api_client
+from langgraph_crud_app.services.llm import llm_preprocessing_service # 更新导入路径
+from langgraph_crud_app.services import data_processor
 
 # --- 初始化流程动作节点 ---
 
 def fetch_schema_action(state: GraphState) -> Dict[str, Any]:
-    """节点动作：调用 API 获取数据库 Schema。"""
+    """
+    动作节点：调用 API 获取数据库的原始 Schema。
+    对应 Dify 节点: '1743973869644'
+    """
     print("---节点: 获取 Schema---")
     try:
         raw_schema_result = api_client.get_schema()

@@ -7,9 +7,10 @@ from langchain_openai import ChatOpenAI
 import os
 import re
 import json
+from langgraph_crud_app.config import settings # 导入配置
 
 # --- LLM 初始化 ---
-# 警告: 不推荐硬编码 API 密钥。请考虑使用环境变量或其他安全方法。
+print(f"--- Debug: 从 settings 读取 API Key: {'*' * (len(settings.OPENAI_API_KEY) - 8) + settings.OPENAI_API_KEY[-4:] if settings.OPENAI_API_KEY else None} ---") # 打印脱敏密钥
 llm_gpt4_1 = ChatOpenAI(
     model="gpt-4.1",
     temperature=0.7, # Keep temperature consistent for now

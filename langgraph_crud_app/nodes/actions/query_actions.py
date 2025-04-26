@@ -1,17 +1,20 @@
-# nodes/query_actions.py: 包含查询/分析流程的动作节点。
+# query_actions.py: 包含查询/分析流程相关的 LangGraph 动作节点函数。
 
 import json
 from typing import Dict, Any, List
 
-# 导入状态定义和所需的服务函数
+# 导入状态定义、API 客户端、数据处理工具和 LLM 服务
 from langgraph_crud_app.graph.state import GraphState
 from langgraph_crud_app.services import api_client, data_processor
-from langgraph_crud_app.services import llm_query_service # 仅导入查询服务
+from langgraph_crud_app.services.llm import llm_query_service # 更新导入路径
 
 # --- 查询/分析流程动作节点 ---
 
 def generate_select_sql_action(state: GraphState) -> Dict[str, Any]:
-    """节点动作：调用 LLM 服务生成 SELECT SQL 查询。"""
+    """
+    动作节点：调用 LLM 服务生成 SELECT SQL 语句。
+    对应 Dify 节点: '1742268678777'
+    """
     print("---节点: 生成 SELECT SQL---")
     query = state.get("query", "")
     schema = state.get("biaojiegou_save", "{}")
