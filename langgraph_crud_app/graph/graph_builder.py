@@ -100,23 +100,14 @@ def build_graph() -> StateGraph:
         "classify_query_analysis_node",
         routers._route_query_or_analysis,
         {
-            "generate_select_sql": "generate_select_sql",
-            "generate_analysis_sql": "generate_analysis_sql"
+            "query": "generate_select_sql",
+            "analysis": "generate_analysis_sql"
         }
     )
 
-    # SQL 生成后进行清理 (需要定义路由逻辑函数)
-    def _route_after_sql_generation(state: GraphState) -> Literal["clean_sql", "handle_clarify_query", "handle_clarify_analysis"]:
-        if state.get("final_answer"):
-            intent = state.get("query_analysis_intent", "query")
-            if intent == "analysis":
-                return "handle_clarify_analysis"
-            else:
-                return "handle_clarify_query"
-        else:
-            return "clean_sql"
-    graph.add_conditional_edges("generate_select_sql", _route_after_sql_generation)
-    graph.add_conditional_edges("generate_analysis_sql", _route_after_sql_generation)
+    # SQL 生成后直接进行清理
+    graph.add_edge("generate_select_sql", "clean_sql")
+    graph.add_edge("generate_analysis_sql", "clean_sql")
 
     # 清理 SQL 后执行查询 (节点名不变)
     graph.add_edge("clean_sql", "execute_sql_query")

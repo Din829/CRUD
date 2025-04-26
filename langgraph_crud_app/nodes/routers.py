@@ -122,20 +122,18 @@ def classify_query_analysis_node(state: GraphState) -> Dict[str, Any]:
         return {"query_analysis_intent": "query", "error_message": error_msg}
 
 def _route_query_or_analysis(state: GraphState) -> Literal[
-    "generate_select_sql",  # 查询路径
-    "generate_analysis_sql" # 分析路径
+    "query",  # 修正：返回逻辑分支名
+    "analysis" # 修正：返回逻辑分支名
 ]:
     """
-    路由逻辑：根据查询/分析子意图决定下一个节点。
+    路由逻辑：根据查询/分析子意图决定下一个逻辑分支。
     """
     sub_intent = state.get("query_analysis_intent")
     print(f"---路由逻辑: 根据查询/分析子意图 '{sub_intent}' 决定走向---")
     if sub_intent == "analysis":
-        # TODO: 链接到实际的 generate_analysis_sql 节点
-        return "generate_analysis_sql"
+        return "analysis" # 返回 'analysis'
     else: # "query" 或 错误/默认
-        # TODO: 链接到实际的 generate_select_sql 节点
-        return "generate_select_sql"
+        return "query"    # 返回 'query'
 
 # --- 查询后路由 ---
 

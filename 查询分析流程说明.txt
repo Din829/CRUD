@@ -13,9 +13,9 @@
     *   对应 Dify 节点: '1743298467743'。
 
 2.  **子意图路由 (`_route_query_or_analysis` 路由逻辑):**
-    *   根据 `query_analysis_intent` 的值进行路由：
-        *   如果为 `"analysis"`，跳转到 `generate_analysis_sql` 节点。
-        *   如果为 `"query"` (或默认/错误)，跳转到 `generate_select_sql` 节点。
+    *   根据 `query_analysis_intent` 的值，此路由函数返回相应的逻辑分支名称 (`"query"` 或 `"analysis"`)：
+        *   如果为 `"analysis"`，则条件边将流程导向 `generate_analysis_sql` 节点。
+        *   如果为 `"query"` (或默认/错误)，则条件边将流程导向 `generate_select_sql` 节点。
 
 3.  **SQL 生成 (分支):**
     *   **a. 生成 SELECT SQL (`generate_select_sql` 节点):**
@@ -23,38 +23,33 @@
         *   输入: 用户查询 (`query`), Schema (`biaojiegou_save`), 表名列表 (`table_names`), 数据示例 (`data_sample`)。
         *   输出: 生成的 SELECT SQL 语句，或表示需要澄清的错误消息 ("ERROR: ...")。
         *   结果存储在 `sql_query_generated` 状态字段，错误信息（如有）存储在 `final_answer` 和 `error_message`。
+        *   成功生成后，流程进入第 4 步 (`clean_sql`)。
         *   对应 Dify 节点: '1742268678777'。
     *   **b. 生成分析 SQL (`generate_analysis_sql` 节点):**
         *   调用 `llm_query_service.generate_analysis_sql` 函数。
         *   输入: 同上。
         *   输出: 生成的分析 SQL 语句 (含 COUNT, GROUP BY 等)，或表示需要澄清的错误消息 ("ERROR: ...")。
         *   结果存储和错误处理同上。
+        *   成功生成后，流程进入第 4 步 (`clean_sql`)。
         *   对应 Dify 节点: '1743298593001'。
 
-4.  **SQL 生成后路由 (`_route_after_sql_generation` 路由逻辑):**
-    *   检查上一步 SQL 生成的结果。
-    *   **情况一：生成失败或请求澄清:** 如果 `final_answer` 字段在上一步被设置（包含 "ERROR: ..." 消息），则根据 `query_analysis_intent` 路由到：
-        *   `handle_clarify_query` (查询意图)
-        *   `handle_clarify_analysis` (分析意图)
-    *   **情况二：生成成功:** 如果 `final_answer` 为空，则路由到 `clean_sql` 节点。
-
-5.  **SQL 清理 (`clean_sql` 节点):**
+4.  **SQL 清理 (`clean_sql` 节点):**
     *   调用 `data_processor.clean_sql_string` 函数处理 `sql_query_generated` 中的 SQL 语句。
     *   移除 Markdown 标记、多余换行符和空格。
     *   将清理后的 SQL 更新回 `sql_query_generated` 状态字段。
     *   对应 Dify 节点: '1742268810496' 和 '17432988044960'。
 
-6.  **执行 SQL 查询 (`execute_sql_query` 节点):**
+5.  **执行 SQL 查询 (`execute_sql_query` 节点):**
     *   调用 `api_client.execute_query` 函数，使用清理后的 `sql_query_generated`。
     *   将 API 返回的 JSON 结果字符串存储在 `sql_result` 状态字段。
     *   如果 API 调用成功，清除 `error_message` 和 `final_answer`。
     *   如果 API 调用失败，记录错误到 `error_message`，并根据意图设置请求澄清的 `final_answer`。
     *   对应 Dify 节点: '1742268852484' 和 '17432988291020'。
 
-7.  **SQL 执行后准备路由 (`route_after_query_execution_node` 节点):**
+6.  **SQL 执行后准备路由 (`route_after_query_execution_node` 节点):**
     *   仅作为连接点，打印当前状态（错误和结果），准备进行下一步路由。
 
-8.  **SQL 执行后路由 (`_route_after_query_execution` 路由逻辑):**
+7.  **SQL 执行后路由 (`_route_after_query_execution` 路由逻辑):**
     *   检查 `error_message` 和 `sql_result` 的状态。
     *   **情况一：执行失败:** 如果 `error_message` 存在，根据 `query_analysis_intent` 路由到：
         *   `handle_clarify_analysis` (分析意图)
@@ -66,7 +61,7 @@
         *   `analyze_analysis_result` (分析意图)
         *   `format_query_result` (查询意图)
 
-9.  **最终处理/回复 (分支):**
+8.  **最终处理/回复 (分支):**
     *   **a. 处理查询结果 (`format_query_result` 节点):**
         *   调用 `llm_query_service.format_query_result` 函数。
         *   输入: 用户查询 (`query`), SQL 结果 (`sql_result`)。
