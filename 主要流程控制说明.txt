@@ -1,0 +1,43 @@
+目标:
+在 LangGraph 初始化流程成功准备好数据库元数据后，根据用户的输入 (`query`) 判断其主要意图，并将流程引导至相应的处理分支。
+
+入口:
+当初始化流程成功完成（`fetch_sample_data` 节点执行完毕）或检测到元数据已存在（`_get_initialization_route` 返回 `"continue_to_main_flow"`）时，流程进入主意图分类节点。
+
+流程步骤:
+
+1.  **主意图分类 (`classify_main_intent_node` 节点):**
+    *   这是初始化之后的主流程入口。
+    *   调用 `llm_query_service.classify_main_intent` 函数处理用户查询 (`query`)。
+    *   将用户的主要意图分类为以下几种之一（存储在 `main_intent` 状态字段）：
+        *   `query_analysis`: 查询或分析数据。
+        *   `modify`: 修改现有数据。
+        *   `add`: 新增数据。
+        *   `delete`: 删除数据。
+        *   `reset`: 重置某些状态（例如，清除待确认的操作）。
+        *   `confirm_other`: 用户进行确认操作，或意图无法明确归类。
+    *   对应 Dify 节点: '1742268516158'。
+
+2.  **主意图路由 (`_route_after_main_intent` 路由逻辑):**
+    *   在 `classify_main_intent_node` 执行后，根据 `main_intent` 的值决定下一跳：
+        *   **`query_analysis` -> `classify_query_analysis_node`**: 进入查询/分析的子流程（详见 `查询分析流程说明.txt`）。
+        *   **`modify` -> `handle_modify_intent`**: 进入处理修改意图的占位符节点。
+        *   **`add` -> `handle_add_intent`**: 进入处理新增意图的占位符节点。
+        *   **`delete` -> `handle_delete_intent`**: 进入处理删除意图的占位符节点。
+        *   **`reset` -> `handle_reset`**: 进入处理重置意图的节点。
+        *   **`confirm_other` (或错误/未知) -> `handle_confirm_other`**: 进入处理确认或其他意图的占位符节点。
+
+3.  **各分支处理 (当前状态):**
+    *   **查询/分析分支**: 进入详细的查询/分析子流程。
+    *   **重置分支 (`handle_reset` 节点):**
+        *   清空 `content_modify`, `delete_show`, `lastest_content_production`, `content_new`, `save_content` 等用于暂存待确认操作的状态变量。
+        *   设置 `final_answer` 为 "之前的检索状态已重置。"。
+        *   流程结束 (END)。
+        *   对应 Dify 节点: '1742436161345' 和 '1742436269084'。
+    *   **修改/新增/删除/确认/其他分支**: 
+        *   分别进入对应的占位符节点 (`handle_modify_intent`, `handle_add_intent`, `handle_delete_intent`, `handle_confirm_other`)。
+        *   这些节点目前仅打印信息，设置一个表示"功能待实现"的 `final_answer`。
+        *   流程结束 (END)。
+
+总结:
+主流程控制的核心是主意图分类和路由。它确保用户的请求被导向正确的处理逻辑（目前主要是查询/分析流程和重置流程，其他为占位符）。 
