@@ -2,7 +2,8 @@
 
 from typing import Literal, Dict, Any
 from langgraph_crud_app.graph.state import GraphState
-from langgraph_crud_app.services import llm_query_service
+# from langgraph_crud_app.services import llm_query_service # 旧路径
+from langgraph_crud_app.services.llm import llm_query_service # 修正路径
 
 # --- 主意图路由 ---
 
@@ -28,7 +29,7 @@ def _route_after_main_intent(state: GraphState) -> Literal[
     "handle_add_intent",          # 新增分支
     "handle_delete_intent",       # 删除分支
     "handle_reset",               # 重置分支
-    "handle_confirm_other"        # 确认/其他分支
+    "route_confirmation_entry"  # 新的确认流程入口节点
 ]:
     """
     路由逻辑：根据主意图分类结果决定下一个节点。
@@ -46,4 +47,4 @@ def _route_after_main_intent(state: GraphState) -> Literal[
     elif intent == "reset":
         return "handle_reset"
     else: # "confirm_other" 或 错误/未知
-        return "handle_confirm_other" 
+        return "route_confirmation_entry" 

@@ -21,7 +21,7 @@
 2.  **主意图路由 (`_route_after_main_intent` 路由逻辑):**
     *   在 `classify_main_intent_node` 执行后，根据 `main_intent` 的值决定下一跳：
         *   **`query_analysis` -> `classify_query_analysis_node`**: 进入查询/分析的子流程（详见 `查询分析流程说明.txt`）。
-        *   **`modify` -> `handle_modify_intent`**: 进入处理修改意图的占位符节点。
+        *   **`modify` -> `generate_modify_context_sql_action`**: 进入修改流程的第一步：生成上下文查询 SQL（详见 `修改流程说明.txt`）。
         *   **`add` -> `handle_add_intent`**: 进入处理新增意图的占位符节点。
         *   **`delete` -> `handle_delete_intent`**: 进入处理删除意图的占位符节点。
         *   **`reset` -> `handle_reset`**: 进入处理重置意图的节点。

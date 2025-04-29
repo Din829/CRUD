@@ -1,0 +1,59 @@
+目标:
+处理用户输入的修改请求，能够理解复杂意图（如基于当前值的计算、影响多条记录的条件），生成修改预览，并在用户确认后执行。
+
+入口:
+当主流程将意图分类为 "modify" 时，流程进入此子流程。
+
+流程步骤:
+
+1.  **生成上下文查询 SQL (`generate_modify_context_sql_action` 节点):**
+    *   这是修改流程的入口节点。
+    *   调用 `llm_modify_service.generate_modify_context_sql` 函数处理用户原始查询 (`query`) 以及数据库元数据 (`biaojiegou_save`, `table_names`, `data_sample`)。
+    *   **目的**: 生成一个 SELECT SQL 语句，用于查询用户意图所涉及记录的**当前状态**。
+    *   LLM Prompt 设计为可以处理多表关联查询，返回固定格式的字段（table_name, id, field1, field2, extra）。
+    *   生成的 SQL 存储在状态的 `modify_context_sql` 字段。
+    *   如果 LLM 无法生成有效 SQL（例如，用户意图不清），此节点会设置 `final_answer` 请求用户澄清，并结束流程（不设置 error_message）。
+    *   如果发生内部错误，设置 `error_message`。
+
+2.  **执行上下文查询 SQL (`execute_modify_context_sql_action` 节点):**
+    *   获取状态中的 `modify_context_sql`。
+    *   如果上一步出错或未生成 SQL，则跳过执行。
+    *   调用 `api_client.execute_query` 函数执行 SQL。
+    *   将 API 返回的 JSON 结果字符串（包含相关记录的当前数据）存储在 `modify_context_result` 状态字段。
+    *   如果 API 调用失败，记录错误到 `error_message`。
+    *   **注意**: 即使查询结果为空 (`'[]'`)，也不会视为错误，因为这对于后续 LLM 判断记录是否存在是有效信息。
+
+3.  **解析修改请求 (`parse_modify_request_action` 节点):**
+    *   获取用户原始查询 (`query`)、数据库元数据以及上一步获取的**上下文查询结果** (`modify_context_result`)。
+    *   调用 `llm_modify_service.parse_modify_request` 函数。
+    *   **目的**: 结合所有信息（特别是记录的当前状态），生成描述具体修改操作的 JSON 对象字符串（格式：`{"table_name": [op1, op2, ...]}`）。
+    *   LLM Prompt 指示它利用 `modify_context_result` 进行计算、确认记录等。
+    *   生成的原始 JSON 字符串存储在 `raw_modify_llm_output`。
+    *   如果 LLM 无法解析（返回 `'[]'`），设置 `final_answer` 请求用户澄清。
+    *   如果发生内部错误，设置 `error_message`。
+
+4.  **验证并存储修改内容 (`validate_and_store_modification_action` 节点):**
+    *   获取 `raw_modify_llm_output`。
+    *   如果上一步出错，则传递错误。
+    *   如果 `raw_modify_llm_output` 为空或 `'[]'` (表示上一步请求了澄清)，则直接跳过，不设置错误。
+    *   验证 `raw_modify_llm_output` 是否为有效的 JSON 格式。
+    *   验证通过，将原始 JSON 字符串存入 `content_modify`，并清空 `error_message`。
+    *   验证失败，设置 `error_message`。
+
+5.  **提供修改反馈 (`provide_modify_feedback_action` 节点):**
+    *   如果前面的步骤成功（无 `error_message` 且 `content_modify` 有效）。
+    *   读取 `content_modify` 的内容。
+    *   生成 `final_answer`，向用户展示准备好的修改内容，并提示用户发送 "保存" 进行确认。
+    *   流程结束 (END)。
+
+6.  **处理修改错误 (`handle_modify_error_action` 节点):**
+    *   如果在步骤 1、2、3 或 4 中设置了 `error_message`，流程会路由到此节点。
+    *   读取 `error_message`。
+    *   生成包含错误信息的 `final_answer`。
+    *   流程结束 (END)。
+
+7.  **后续流程 (用户确认后):**
+    *   当用户回复 "保存" 时，流程会进入 "确认流程"（详见 `保存确认流程说明.txt`），最终调用 `execute_modify_action` 执行修改。
+
+总结:
+新的修改流程通过增加上下文查询步骤，使 LLM 能够获取待修改记录的实时信息，从而更准确地理解用户意图、处理基于当前值的计算和多记录/多表修改，提高了处理复杂修改请求的能力。

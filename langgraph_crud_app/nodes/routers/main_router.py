@@ -24,11 +24,11 @@ def classify_main_intent_node(state: GraphState) -> Dict[str, Any]:
 
 def _route_after_main_intent(state: GraphState) -> Literal[
     "classify_query_analysis_node", # 查询/分析分支
-    "handle_modify_intent",       # 修改分支
+    "parse_modify_request_action", # 修改分支
     "handle_add_intent",          # 新增分支
     "handle_delete_intent",       # 删除分支
     "handle_reset",               # 重置分支
-    "handle_confirm_other"        # 确认/其他分支
+    "route_confirmation_entry"    # 确认/其他分支
 ]:
     """
     路由逻辑：根据主意图分类结果决定下一个节点。
@@ -38,7 +38,7 @@ def _route_after_main_intent(state: GraphState) -> Literal[
     if intent == "query_analysis":
         return "classify_query_analysis_node"
     elif intent == "modify":
-        return "handle_modify_intent"
+        return "parse_modify_request_action"
     elif intent == "add":
         return "handle_add_intent"
     elif intent == "delete":
@@ -46,4 +46,4 @@ def _route_after_main_intent(state: GraphState) -> Literal[
     elif intent == "reset":
         return "handle_reset"
     else: # "confirm_other" 或 错误/未知
-        return "handle_confirm_other" 
+        return "route_confirmation_entry" 

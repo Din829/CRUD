@@ -18,6 +18,9 @@ class GraphState(TypedDict):
     save_content: Optional[str]          # 控制标志，指示待处理的保存操作: "修改路径", "新增路径", "删除路径", 或 None (请求用户确认前设置)
     # id_check: Optional[str]            # Dify 变量，用途不明确，暂时省略，除非需要
 
+    # 新增：用于存储 API 调用结果的临时字段
+    api_call_result: Optional[Any]       # 存储 /update_record, /insert_record, /delete_record 等 API 调用的返回结果
+
     # --- 工作流输入 / 输出 ---
     query: str                           # 用户的输入查询 (来自 Dify 'sys.query')
     final_answer: Optional[str]          # 给用户的最终回复 (由 Dify 中的 Answer 节点生成)
@@ -35,7 +38,12 @@ class GraphState(TypedDict):
     main_intent: Optional[str]           # 主意图分类结果 (e.g., "query_analysis", "modify", "reset")
     query_analysis_intent: Optional[str] # 查询/分析子意图分类结果 (e.g., "query", "analysis")
 
+    # --- 修改流程的中间状态 (新增) ---
+    modify_context_sql: Optional[str]    # 为获取修改上下文而生成的 SELECT SQL
+    modify_context_result: Optional[str] # 执行上下文 SQL 后返回的 JSON 结果字符串
+
     # --- API 调用前 LLM 生成的中间状态 ---
+    raw_modify_llm_output: Optional[str] # 修改流程中，LLM解析用户意图后返回的原始 JSON 字符串
     # (目前使用 lastest_content_production 和 delete_array, 镜像 Dify 的变量用法)
     # llm_generated_update_payload: Optional[List[Dict]] # 如果解析 JSON 字符串，可以使用此字段
     # llm_generated_insert_payload: Optional[List[Dict]] # 如果解析 JSON 字符串，可以使用此字段

@@ -31,27 +31,33 @@ def _get_initialization_route(state: GraphState) -> Literal["start_initializatio
 
 def route_initialization_node(state: GraphState) -> Dict[str, Any]:
     """
-    路由节点：打印状态检查信息，本身不执行路由，仅返回空状态更新。
-    路由逻辑由 _get_initialization_route 在条件边中处理。
+    路由节点：检查状态并打印信息。修改：总是重置错误消息。
     """
     print("---路由节点: 检查初始化状态 (打印信息)---")
+    # 打印检查信息
+    biaojiegou_save = state.get("biaojiegou_save")
+    table_names = state.get("table_names")
+    data_sample = state.get("data_sample")
     error_message = state.get("error_message")
-    if error_message:
-        print(f"检测到错误，将路由到错误处理: {error_message}")
-    else:
-        biaojiegou_save = state.get("biaojiegou_save")
-        table_names = state.get("table_names")
-        data_sample = state.get("data_sample")
-        if biaojiegou_save and biaojiegou_save != "{}" and table_names and data_sample and data_sample != "{}":
-            print("所有初始化数据已存在，将继续主流程。")
-        else:
-            missing = []
-            if not (biaojiegou_save and biaojiegou_save != "{}"):
-                missing.append("Schema")
-            if not table_names:
-                missing.append("表名")
-            if not (data_sample and data_sample != "{}"):
-                missing.append("数据示例")
-            print(f"缺少初始化数据: {', '.join(missing)}。将开始初始化流程。")
 
-    return {} 
+    missing_data = []
+    if not biaojiegou_save:
+        missing_data.append("Schema (biaojiegou_save)")
+    if not table_names:
+        missing_data.append("Table Names (table_names)")
+    if not data_sample:
+        missing_data.append("Data Sample (data_sample)")
+
+    if missing_data:
+        print(f"状态检查：缺少数据: {', '.join(missing_data)}")
+    else:
+        print("状态检查：必需的元数据 (Schema, Tables, Sample) 存在。")
+
+    if error_message:
+        print(f"状态检查：检测到错误消息: {error_message}")
+    else:
+        print("状态检查：未检测到错误消息。")
+
+    # 修改：总是返回一个字典，并将 error_message 重置为 None
+    # 这样可以确保每次运行都从干净的错误状态开始，避免残留错误干扰路由
+    return {"error_message": None} 
