@@ -211,7 +211,7 @@ def generate_modify_context_sql(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ])
-        llm_output = response.content.strip()
+        llm_output = response.content.strip() # 获取 LLM 的原始输出
         print(f"LLM 生成上下文 SQL (原始):\n{llm_output}") # 打印完整原始输出以便调试
 
         # --- 增强 SQL 提取逻辑 ---
@@ -253,3 +253,66 @@ def generate_modify_context_sql(
     except Exception as e:
         print(f"LLM 生成上下文 SQL 失败: {e}")
         return "" 
+
+# --- 新增：检查直接修改 ID 意图的函数 ---
+
+def check_for_direct_id_modification_intent(query: str) -> Optional[str]:
+    """
+    使用 LLM 判断用户查询是否包含明确、直接修改主键 ID 的意图。
+
+    Args:
+        query: 用户的原始查询字符串。
+
+    Returns:
+        如果检测到不允许的意图，返回用户提示字符串；否则返回 None。
+    """
+    # 构建 Prompt
+    # 设计思路：明确任务，强调区分主键修改与其他涉及 ID 的操作，要求简单明确的输出。
+    # 使用与 parse_modify_request 相同的 ChatPromptTemplate 方式
+    system_prompt = """你是一个高度精确的意图分析助手。你的任务是判断用户查询是否包含 **明确且直接地要求将某个现有记录的主键 ID 值更改为另一个具体值** 的意图。"""
+    user_prompt = """请仔细分析以下用户查询：
+\`\`\`
+{query}
+\`\`\`
+
+请特别注意区分以下情况，这些情况 **不应** 被视为明确修改主键 ID：
+- 使用 ID 来查找或筛选记录（例如："更新 ID 为 5 的订单状态"）。
+- 更新记录的其他非 ID 字段的值。
+- 修改记录之间的关联关系（外键）（例如："将工单分配给 ID 为 10 的技术员"）。
+- 涉及 ID 但意图不明确或模糊的表述。
+
+如果查询 **明确且直接地** 要求将一个记录的主键 ID 更改为另一个值，请只回答 "DETECTED"。
+否则，请只回答 "SAFE"。
+
+判断结果："""
+
+    # 使用与项目中其他地方一致的模型实例
+    # 注意：如果项目中 llm 实例是全局或共享的，请直接使用它
+    # 这里暂时重新初始化，如果需要共享，请调整
+    llm = ChatOpenAI(model="gpt-4o", temperature=0.0) # 使用低 temperature 确保一致性
+
+    standard_rejection_message = "检测到您可能明确要求修改记录的 ID。为保证数据安全，不支持直接修改记录的主键 ID。请尝试描述您希望达成的最终状态，例如更新字段值或重新关联记录。"
+
+    try:
+        # 使用 ChatPromptTemplate 和 invoke
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", user_prompt)
+        ])
+        response = llm.invoke(prompt.format_prompt(query=query).to_messages())
+        llm_output = response.content.strip()
+        
+        # 分析 LLM 的响应
+        if llm_output and "DETECTED" in llm_output.upper(): # 使用 .upper() 增加鲁棒性
+            print(f"LLM 检测到修改 ID 意图，查询: '{query}', 响应: '{llm_output}'")
+            return standard_rejection_message
+        else:
+            # 如果响应不是 "DETECTED"，或者为空，或者发生任何意外，都视为安全，允许流程继续
+            print(f"LLM 未检测到修改 ID 意图或响应无效，查询: '{query}', 响应: '{llm_output}'")
+            return None
+            
+    except Exception as e:
+        # 处理 LLM 调用过程中可能发生的异常
+        print(f"调用 LLM 检查修改 ID 意图时发生错误: {e}")
+        # 保守起见，如果检查失败，允许流程继续，并打印错误
+        return None 

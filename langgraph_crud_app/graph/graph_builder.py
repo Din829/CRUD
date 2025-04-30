@@ -134,7 +134,7 @@ def build_graph() -> StateGraph:
         }
     )
 
-    # 新增：修改流程 - 上下文查询部分的边
+    # 修改流程 - 上下文查询部分的边
     graph.add_conditional_edges(
         "generate_modify_context_sql_action",
         _route_after_context_sql_generation,
@@ -144,6 +144,7 @@ def build_graph() -> StateGraph:
             # 如果 generate_modify_context_sql_action 设置了 final_answer，可能需要直接 END
         }
     )
+    # 修改流程 - 上下文查询执行部分的边
     graph.add_conditional_edges(
         "execute_modify_context_sql_action",
         _route_after_context_sql_execution,
@@ -155,6 +156,8 @@ def build_graph() -> StateGraph:
 
     # 修改流程 - 解析、验证、反馈部分的边 (保持不变)
     graph.add_edge("parse_modify_request_action", "validate_and_store_modification_action")
+
+    # 修改流程 - 验证、反馈路由
     graph.add_conditional_edges(
         "validate_and_store_modification_action",
         _route_after_validation, # 这个内部路由函数保持不变
@@ -173,6 +176,7 @@ def build_graph() -> StateGraph:
             "stage_operation_node": "stage_operation_node"
         }
     )
+    # 确认流程 - 操作阶段路由
     graph.add_conditional_edges(
         "stage_operation_node",
         confirmation_router._stage_operation_logic,
@@ -181,6 +185,7 @@ def build_graph() -> StateGraph:
             "handle_nothing_to_stage": "handle_nothing_to_stage"
         }
     )
+    # 确认流程 - 检查已暂存操作路由
     graph.add_conditional_edges(
         "check_staged_operation_node",
         confirmation_router._check_staged_operation_logic,
@@ -189,6 +194,7 @@ def build_graph() -> StateGraph:
             "handle_invalid_save_state": "handle_invalid_save_state"
         }
     )
+    # 确认流程 - 询问确认修改路由
     graph.add_conditional_edges(
         "ask_confirm_modify_node",
         confirmation_router._ask_confirm_modify_logic,
@@ -200,6 +206,7 @@ def build_graph() -> StateGraph:
 
     # 确认流程动作序列
     graph.add_edge("execute_modify_action", "reset_after_modify_action")
+    
     graph.add_edge("reset_after_modify_action", "format_modify_response_action")
 
     # 查询/分析 子意图路由

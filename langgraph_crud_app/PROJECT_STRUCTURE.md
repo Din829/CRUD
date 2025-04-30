@@ -39,7 +39,7 @@ langgraph_crud_app/
 │   │   │   ├── reset_after_modify_action    # 修改后清空状态
 │   │   │   └── format_modify_response_action# LLM 格式化修改结果
 │   │   └── modify_actions.py     # 修改流程特有动作
-│   │       ├── generate_modify_context_sql_action  # LLM 生成修改上下文查询 SQL
+│   │       ├── generate_modify_context_sql_action  # 调用 LLM 意图检查；若通过，则生成修改上下文查询 SQL
 │   │       ├── execute_modify_context_sql_action   # 执行修改上下文查询 SQL
 │   │       ├── parse_modify_request_action         # LLM 解析修改请求 (利用上下文)
 │   │       ├── validate_and_store_modification_action # 验证并存储修改内容
@@ -90,6 +90,7 @@ langgraph_crud_app/
 │       │   ├── format_modify_response   # 使用 LLM 格式化修改操作的最终结果反馈给用户
 │       │   └── format_general_response  # 使用 LLM 生成通用回复 (例如，澄清、错误处理)
 │       └── llm_modify_service.py     # 修改流程 LLM 服务
+│           ├── check_for_direct_id_modification_intent # LLM 判断用户是否明确要求修改主键 ID
 │           ├── parse_modify_request     # LLM 解析修改请求 (利用上下文)
 │           └── generate_modify_context_sql # LLM 生成修改上下文查询 SQL
 │
