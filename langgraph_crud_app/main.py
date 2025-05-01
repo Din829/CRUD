@@ -44,7 +44,8 @@ def main():
                     continue
 
                 print(f"\n--- 处理查询: {user_query} ---")
-                inputs = {"query": user_query}
+                # 使用 GraphState 中定义的键名 user_query
+                inputs = {"user_query": user_query}
                 # 使用 stream_mode="values" 来获取每次更新后的完整状态
                 events = runnable.stream(inputs, config=config, stream_mode="values")
 

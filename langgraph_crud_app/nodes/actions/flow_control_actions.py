@@ -1,6 +1,6 @@
 # nodes/flow_control_actions.py: 包含主要流程控制相关的动作节点。
 
-from typing import Dict, Any
+from typing import Dict, Any, List
 import json # 新增导入
 
 # 导入状态定义
@@ -16,34 +16,44 @@ def handle_reset_action(state: GraphState) -> Dict[str, Any]:
     节点动作：处理重置意图。
     对应 Dify 节点: '1742436161345' (重置检索结果)
     """
-    print("---节点: 处理重置意图--- marginalised")
+    print("---节点: 处理重置意图---")
+    # 同时也清空新增和删除相关状态
     return {
         "content_modify": None,
         "delete_show": None,
-        "lastest_content_production": [],
+        "lastest_content_production": None,
+        "delete_array": None,
         "content_new": None,
         "save_content": None,
-        "final_answer": "之前的检索状态已重置。"
+        "raw_add_llm_output": None,
+        "structured_add_records": None,
+        "add_error_message": None,
+        "raw_modify_llm_output": None,
+        "modify_context_sql": None,
+        "modify_context_result": None,
+        "modify_error_message": None,
+        # ... 其他可能需要重置的状态 ...
+        "final_answer": "之前的操作状态已重置。"
     }
 
 def handle_modify_intent_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：处理修改意图 (占位符)。"""
-    print("---节点: 处理修改意图 (占位符)--- marginalised")
+    print("---节点: 处理修改意图 (占位符)---")
     return {"final_answer": "收到修改请求 (功能待实现)。"}
 
 def handle_add_intent_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：处理新增意图 (占位符)。"""
-    print("---节点: 处理新增意图 (占位符)--- marginalised")
+    print("---节点: 处理新增意图 (占位符)---")
     return {"final_answer": "收到新增请求 (功能待实现)。"}
 
 def handle_delete_intent_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：处理删除意图 (占位符)。"""
-    print("---节点: 处理删除意图 (占位符)--- marginalised")
+    print("---节点: 处理删除意图 (占位符)---")
     return {"final_answer": "收到删除请求 (功能待实现)。"}
 
 def handle_confirm_other_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：处理确认或其他意图 (占位符)。"""
-    print("---节点: 处理确认/其他意图 (占位符)--- marginalised")
+    print("---节点: 处理确认/其他意图 (占位符)---")
     return {"final_answer": "收到确认或其他请求 (功能待实现)。"}
 
 """
@@ -56,23 +66,52 @@ def handle_confirm_other_action(state: GraphState) -> Dict[str, Any]:
 
 def stage_modify_action(state: GraphState) -> Dict[str, Any]:
     """
-    节点动作：暂存修改操作，并向用户请求确认。
+    节点动作：暂存【修改】操作，并向用户请求确认。
     对应 Dify 节点: '1742272935164' (赋值) + '1742272958774' (回复)
     """
-    print("---节点: 暂存修改操作--- marginalised")
+    print("---节点: 暂存修改操作---")
     content_to_modify = state.get("content_modify", "")
-    # TODO: 实际应用中，content_modify 的格式可能需要调整或美化后再展示给用户
-    confirmation_message = f"以下是即将保存的信息，请确认，并回复是/否进行修改\n\n{content_to_modify}"
+    lastest_content_production = state.get("lastest_content_production")
+    
+    if not content_to_modify or not lastest_content_production:
+         print("错误：无法暂存修改，缺少预览内容或待生产数据。")
+         # 可以路由到 handle_nothing_to_stage 或设置错误
+         return {"error_message": "无法暂存修改操作，缺少必要内容。"}
+         
+    # 注意: lastest_content_production 应该是在修改流程中准备好的 API 负载
+    # 此处仅设置标记和最终提问
+    confirmation_message = f"以下是即将【修改】的信息，请确认，并回复'是'/'否'\n\n{content_to_modify}"
     return {
         "save_content": "修改路径",
         "final_answer": confirmation_message
+        # lastest_content_production 已由修改流程设置，此处不修改
+    }
+
+def stage_add_action(state: GraphState) -> Dict[str, Any]:
+    """
+    节点动作：暂存【新增】操作，并向用户请求确认。
+    对应 Dify 节点: '1742438351562' (赋值) + '1742438384982' (赋值) + '1742438414307' (回复)
+    """
+    print("---节点: 暂存新增操作---")
+    content_to_add = state.get("content_new") # 用户预览文本
+    lastest_content_production = state.get("lastest_content_production") # 待提交API的数据
+
+    if not content_to_add or not lastest_content_production:
+        print("错误：无法暂存新增，缺少预览内容或待生产数据。")
+        return {"error_message": "无法暂存新增操作，缺少必要内容。"}
+
+    confirmation_message = f"以下是即将【新增】的信息，请确认，并回复'是'/'否'\n\n{content_to_add}"
+    return {
+        "save_content": "新增路径",
+        "final_answer": confirmation_message
+        # lastest_content_production 已由新增流程设置
     }
 
 def handle_nothing_to_stage_action(state: GraphState) -> Dict[str, Any]:
     """
     节点动作：处理无法确定要暂存哪个操作的情况。
     """
-    print("---节点: 处理无法暂存操作--- marginalised")
+    print("---节点: 处理无法暂存操作---")
     return {
         "final_answer": "抱歉，当前没有可以保存或确认的操作。请先进行修改、新增或删除操作。"
     }
@@ -81,7 +120,7 @@ def handle_invalid_save_state_action(state: GraphState) -> Dict[str, Any]:
     """
     节点动作：处理 save_content 与实际状态不符的情况。
     """
-    print("---节点: 处理无效保存状态--- marginalised")
+    print("---节点: 处理无效保存状态---")
     # 清理可能不一致的状态
     return {
         "save_content": None,
@@ -93,130 +132,208 @@ def cancel_save_action(state: GraphState) -> Dict[str, Any]:
     节点动作：用户取消保存/确认操作。
     对应 Dify 节点: '1742350702992' (赋值) + '1742350737329' (回复)
     """
-    print("---节点: 取消保存操作--- marginalised")
+    print("---节点: 取消保存操作---")
     return {
         "save_content": None,
         "final_answer": "由于未收到明确保存指令，保存进程终止，你可以继续编辑内容，或输入'保存'重启保存流程"
     }
 
-# execute_modify_action, reset_after_modify_action, format_modify_response_action 等将在后续添加
-def execute_modify_action(state: GraphState) -> Dict[str, Any]:
+def execute_operation_action(state: GraphState) -> Dict[str, Any]:
     """
-    节点动作：执行修改操作，调用 API。
-    对应 Dify 节点: '1742351513942' (LLM) + '1742354001584' (Code)
-    **简化点**: 假设 state['content_modify'] 已包含 API 所需的 JSON 格式。
+    节点动作：执行暂存的操作（修改或新增），调用相应 API。
     """
-    print("---节点: 执行修改操作--- marginalised")
-    content_modify_str = state.get("content_modify")
+    save_content = state.get("save_content")
     api_call_result = None
     error_message = None
 
-    if not content_modify_str:
-        error_message = "执行修改失败：缺少修改内容 (content_modify is empty)。"
-        print(error_message)
-        return {"error_message": error_message, "api_call_result": None}
+    print(f"---节点: 执行操作 (类型: {save_content})---")
 
-    try:
-        # 假设 content_modify_str 是 LLM 返回的 JSON 字符串，格式为 {"table_name": [operations...]}
+    if save_content == "修改路径":
+        # --- 执行修改 --- 
+        latest_production = state.get("lastest_content_production")
+        if not latest_production:
+            error_message = "执行修改失败：缺少待处理的负载数据。"
+            print(error_message)
+            return {"error_message": error_message, "api_call_result": None}
+
+        flask_payload = latest_production 
+        if not isinstance(flask_payload, list):
+             error_message = "执行修改失败：待处理的负载数据格式不正确（应为列表）。"
+             print(error_message)
+             return {"error_message": error_message, "api_call_result": None}
+
         try:
-            llm_output_dict = json.loads(content_modify_str)
-            if not isinstance(llm_output_dict, dict):
-                raise ValueError("content_modify 解析后应为字典")
+            print(f"调用 API /update_record, payload: {flask_payload}")
+            api_call_result = api_client.update_record(flask_payload)
+            print(f"API 调用结果: {api_call_result}")
+            # 检查 API 返回错误
+            if isinstance(api_call_result, list) and any("error" in item for item in api_call_result):
+                first_error = next((item["error"] for item in api_call_result if "error" in item), "未知 API 错误")
+                error_message = f"API 更新操作部分或全部失败: {first_error}"
+            elif isinstance(api_call_result, dict) and "error" in api_call_result:
+                error_message = f"API 更新操作失败: {api_call_result['error']}"
 
-            # --- 数据结构转换 --- 
-            # 将 { "table": [op1, op2...] } 转换为 [ {"table_name":"table", ...op1}, {"table_name":"table", ...op2} ]
-            flask_payload = []
-            for table_name, operations in llm_output_dict.items():
-                if not isinstance(operations, list):
-                    raise ValueError(f"字典中表 '{table_name}' 的值应为列表")
-                for op in operations:
-                    if not isinstance(op, dict):
-                        raise ValueError(f"操作列表中的元素应为字典")
-                    # 构建 Flask API 期望的单条更新字典
-                    single_update = {
-                        "table_name": table_name,
-                        "primary_key": op.get("primary_key"),
-                        "primary_value": op.get("primary_value"),
-                        # 关键：重命名字段键 "fields" -> "update_fields"
-                        "update_fields": op.get("fields", {})
-                        # op 中可能存在的 "target_primary_value" 在此被忽略，因为 Flask API 不期望它
-                    }
-                    # 进行基本检查，确保关键信息存在
-                    if not all([single_update["table_name"], single_update["primary_key"], single_update["primary_value"] is not None]):
-                         raise ValueError(f"操作字典缺少 table_name, primary_key, 或 primary_value: {op}")
-                    flask_payload.append(single_update)
+            if error_message: print(error_message)
+
+        except Exception as e:
+            error_message = f"执行修改 API 调用时发生错误: {e}"
+            print(error_message)
+            api_call_result = {"error": error_message}
             
-            if not flask_payload:
-                 raise ValueError("转换后的更新负载为空，原始数据可能无效或为空。")
+    elif save_content == "新增路径":
+        # --- 执行新增 ---
+        # 修改：直接从 lastest_content_production 获取处理后的 List[Dict]
+        latest_production = state.get("lastest_content_production") 
+        # 移除: add_processed_records = state.get("add_processed_records") # 这不再需要
 
-        except json.JSONDecodeError as e:
-            raise ValueError(f"解析 content_modify 失败: {e}")
-        except ValueError as e:
-            # 捕获上面转换逻辑中抛出的 ValueError
-            raise ValueError(f"转换 content_modify 结构失败: {e}")
+        if latest_production is None: # 检查 None
+            error_message = "执行新增失败：缺少处理后的记录 (lastest_content_production is None)。"
+            print(error_message)
+            return {"error_message": error_message, "api_call_result": None}
+        if not isinstance(latest_production, list):
+            error_message = f"执行新增失败：处理后的记录格式不正确 (lastest_content_production 应为列表，实际为 {type(latest_production)})。"
+            print(error_message)
+            return {"error_message": error_message, "api_call_result": None}
+        if not latest_production: # 检查列表是否为空
+            error_message = "执行新增失败：没有需要新增的记录 (lastest_content_production is empty)。"
+            print(error_message)
+            return {"error_message": error_message, "api_call_result": None}
 
-        print(f"调用 API /update_record, payload: {flask_payload}") # 使用转换后的 flask_payload
-        api_call_result = api_client.update_record(flask_payload) # 传递转换后的 flask_payload
-        print(f"API 调用结果: {api_call_result}")
-        # 检查 API 返回是否包含错误
-        if isinstance(api_call_result, list) and any("error" in item for item in api_call_result):
-             # 提取第一个错误信息用于显示
-             first_error = next((item["error"] for item in api_call_result if "error" in item), "未知 API 错误")
-             error_message = f"API 更新操作部分或全部失败: {first_error}"
-             print(error_message)
-        elif isinstance(api_call_result, dict) and "error" in api_call_result:
-             error_message = f"API 更新操作失败: {api_call_result['error']}"
-             print(error_message)
+        # 提取 API 需要的 List[Dict] (只包含字段部分) -> 修改：直接传递完整的记录列表
+        # 现在 latest_production 本身就是结构化的 List[Dict[str, Any]]
+        # 假设格式是 [{ "table_name": ..., "fields": {...} }, ...]
+        # 我们只需要提取 "fields" 部分 -> 错误，API 需要完整的结构
+        # flask_payload = []
+        # for record in latest_production:
+        #     if isinstance(record, dict) and "fields" in record and isinstance(record["fields"], dict):
+        #         flask_payload.append(record["fields"])
+        #     else:
+        #          print(f"警告：跳过格式不正确的记录进行新增：{record}")
+        
+        # if not flask_payload:
+        #      error_message = "执行新增失败：无法从处理后的记录 (lastest_content_production) 中提取有效的待插入数据。"
+        #      print(error_message)
+        #      return {"error_message": error_message, "api_call_result": None}
 
-    except Exception as e:
-        error_message = f"执行修改操作时发生错误: {e}"
+        # 直接使用 latest_production 作为 payload
+        flask_payload = latest_production
+
+        # 正确的 try...except 结构
+        try:
+            print(f"调用 API /insert_record, payload: {flask_payload}")
+            api_call_result = api_client.insert_record(flask_payload)
+            print(f"API 调用结果: {api_call_result}")
+
+        except Exception as e:
+            # 捕获 API 调用本身的异常
+            error_message = f"执行新增 API 调用时发生错误: {e}"
+            print(error_message)
+            api_call_result = {"error": error_message} # 记录错误到结果中
+
+    # elif save_content == "删除路径":
+        # ... (未来实现)
+
+    else:
+        # 处理未知的 save_content 类型
+        if save_content:
+             error_message = f"执行操作失败：未知的 save_content 类型 '{save_content}'。"
+        else:
+             error_message = "执行操作失败：未指定操作类型 (save_content 为空)。"
         print(error_message)
-        api_call_result = {"error": error_message} # 统一错误格式
 
-    # 无论成功失败，都存储 API 结果，并清除错误信息（如果 API 调用本身是成功的）
-    # 如果 API 返回错误，error_message 会被设置
-    return {"api_call_result": api_call_result, "error_message": error_message}
-
-def reset_after_modify_action(state: GraphState) -> Dict[str, Any]:
-    """
-    节点动作：修改操作完成后，清空相关状态。
-    对应 Dify 节点: '17444989330050'
-    """
-    print("---节点: 重置修改后状态--- marginalised")
+    # 返回结果
     return {
-        "save_content": None,
-        "content_modify": None,
-        "lastest_content_production": [], # 保持一致性清空
-        # "api_call_result": None # 保留 api_call_result 给下一个节点格式化
+        "api_call_result": json.dumps(api_call_result) if api_call_result is not None else None, 
+        "error_message": error_message # 返回检测到的错误或 None
     }
 
-def format_modify_response_action(state: GraphState) -> Dict[str, Any]:
+def reset_after_operation_action(state: GraphState) -> Dict[str, Any]:
     """
-    节点动作：格式化修改操作的最终回复。
-    对应 Dify 节点: '1744661636396'
+    节点动作：操作完成后，清空相关状态。
+    根据 save_content 清理对应流程的状态。
     """
-    print("---节点: 格式化修改回复--- marginalised")
-    api_result = state.get("api_call_result")
-    final_answer = "修改操作已完成。"
+    save_content = state.get("save_content")
+    print(f"---节点: 重置操作后状态 (类型: {save_content})---")
+    
+    update_dict = {
+        "save_content": None,
+        # "api_call_result": None # 保留给 format_response
+    }
+    
+    if save_content == "修改路径":
+        update_dict["content_modify"] = None
+        update_dict["raw_modify_llm_output"] = None
+        update_dict["modify_context_sql"] = None
+        update_dict["modify_context_result"] = None
+        update_dict["modify_error_message"] = None
+        update_dict["lastest_content_production"] = None # 清空修改负载
+    elif save_content == "新增路径":
+        update_dict["content_new"] = None
+        update_dict["raw_add_llm_output"] = None
+        update_dict["structured_add_records"] = None
+        update_dict["add_error_message"] = None
+        update_dict["lastest_content_production"] = None # 清空新增负载
+    elif save_content == "删除路径":
+        update_dict["delete_show"] = None
+        update_dict["delete_context_sql"] = None
+        update_dict["delete_array"] = None # 清空删除负载
+        
+    # 总是尝试清理 lastest_content_production 以防万一
+    if "lastest_content_production" not in update_dict:
+         update_dict["lastest_content_production"] = None
+        
+    return update_dict
 
-    try:
-        # 调用 LLM 服务格式化回复
-        final_answer = llm_flow_control_service.format_api_result(
-            result=api_result,
-            original_query=state.get("query", ""), # 可能需要传递原始请求以提供上下文
-            operation_type="修改"
-        )
-        print(f"LLM 格式化回复: {final_answer}")
-    except Exception as e:
-        print(f"LLM 格式化回复失败: {e}. 使用默认回复。")
-        # LLM 调用失败，提供一个基于 API 结果的简单回复
-        if isinstance(api_result, list) and any("error" in item for item in api_result):
-            final_answer = f"修改操作遇到问题: {state.get('error_message', '详情请查看日志')}"
-        elif isinstance(api_result, dict) and "error" in api_result:
-             final_answer = f"修改操作失败: {api_result['error']}"
-        elif api_result:
-            final_answer = f"修改操作成功完成！API 返回: {json.dumps(api_result, ensure_ascii=False)}" # 简单的成功提示
-        else:
-            final_answer = "修改操作已执行，但未收到明确的 API 返回信息。"
+def format_operation_response_action(state: GraphState) -> Dict[str, Any]:
+    """
+    节点动作：格式化操作（修改/新增/删除）的最终回复。
+    """
+    print("---节点: 格式化操作回复---")
+    api_result_str = state.get("api_call_result")
+    error_message = state.get("error_message") # 获取执行阶段的错误
+    save_content = state.get("save_content") # 获取操作类型 (例如: '修改路径', '新增路径')
+    query = state.get("query", "") # 获取原始用户查询
+    final_answer = "操作已提交。"
+    op_type_str = {"修改路径": "修改", "新增路径": "新增", "删除路径": "删除"}.get(save_content, "未知操作")
 
-    return {"final_answer": final_answer, "api_call_result": None} # 清空临时结果 
+    # 优先显示执行阶段产生的错误信息
+    if error_message:
+        # 这里可以考虑是否也用 LLM 美化错误信息，但目前保持直接显示
+        final_answer = f"抱歉，处理您的 {op_type_str} 请求时遇到问题：\n{error_message}"
+        print(f"返回执行阶段错误信息: {final_answer}")
+        # 保持错误信息状态可能有助于调试，暂时不清除
+        return {"final_answer": final_answer}
+
+    # 如果没有执行错误，尝试使用 LLM 格式化成功信息
+    if api_result_str:
+        try:
+            api_result = json.loads(api_result_str)
+
+            # 调用 llm_flow_control_service 中的 format_api_result 函数
+            print(f"调用 LLM 格式化 API 结果 (类型: {op_type_str})...")
+            # 将 LLM 调用移到 try 块内部
+            final_answer = llm_flow_control_service.format_api_result(
+                result=api_result,
+                original_query=query,
+                operation_type=op_type_str # 传递更友好的操作类型字符串
+            )
+            print(f"LLM 格式化后的回复: {final_answer}")
+
+        except json.JSONDecodeError as e:
+            # 这个 except 块现在紧跟 try
+            print(f"解析 API 结果 JSON 时出错: {e}。结果字符串: {api_result_str}")
+            final_answer = f"{op_type_str} 操作已提交，但无法解析 API 返回结果。请在后台确认。"
+        except Exception as e:
+            # 这个 except 块也紧跟 try
+            # 捕获 LLM 调用或其他意外错误
+            print(f"调用 LLM 格式化 API 结果时出错: {e}")
+            # 使用备用消息
+            final_answer = f"{op_type_str} 操作已成功提交，但在生成最终回复时遇到问题。请在数据库中确认结果。"
+            
+    else: # 这个 else 对应 if api_result_str:
+        # 如果 API 结果为空，但也没有错误信息
+        print("警告：API 结果为空且无错误信息，将返回通用成功消息。")
+        final_answer = f"{op_type_str} 操作已提交。请在后台确认结果。"
+
+    # 清理本次操作的错误信息（如果执行成功到这里）
+    return {"final_answer": final_answer, "error_message": None} 

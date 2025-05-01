@@ -1,0 +1,59 @@
+目标:
+在用户对修改、新增或删除操作的预览表示初步同意后，管理后续的暂存、最终确认和执行过程，确保操作的原子性和用户意图的准确传达。
+
+入口:
+当主流程将用户的输入（如"保存"、"确认"、"是"）分类为确认意图 (`confirm_other`) 后，进入此流程 (`route_confirmation_entry`)。
+
+流程步骤:
+
+1.  **确认入口决策 (`route_confirmation_entry` 节点 -> `_route_confirmation_entry_logic`):**
+    *   检查状态 `save_content` 是否已有值（表示操作已暂存）。
+    *   **分支一：未暂存 (`save_content` is None) -> `stage_operation_node`**: 用户首次确认，需暂存操作。
+    *   **分支二：已暂存 (`save_content` is not None) -> `check_staged_operation_node`**: 用户进行最终确认。
+
+2.  **尝试暂存 (`stage_operation_node` 节点 -> `_stage_operation_logic`):**
+    *   判断哪个预览内容存在 (`content_modify`, `content_new`, `delete_show`)。
+    *   路由到相应的暂存动作节点（如 `stage_modify_action`）或错误处理 (`handle_nothing_to_stage_action`)。
+
+3.  **执行暂存 (以修改为例: `stage_modify_action` 节点):**
+    *   读取预览内容 (`content_modify`)。
+    *   将预览内容处理后存入待执行负载 (`lastest_content_production`)。
+    *   设置暂存标记 `save_content = "修改路径"`。
+    *   向用户发送二次确认请求 (`final_answer`)。
+    *   流程结束 (END)，等待用户最终答复。
+
+4.  **检查已暂存状态 (`check_staged_operation_node` 节点 -> `_check_staged_operation_logic`):**
+    *   验证 `save_content` 标记与实际暂存数据 (`lastest_content_production`, `delete_array`) 是否一致。
+    *   **分支一：状态一致 -> `ask_confirm_modify_node`**: 进入最终确认环节。
+    *   **分支二：状态不一致 -> `handle_invalid_save_state_action`**: 处理无效状态错误。
+
+5.  **询问最终确认 (`ask_confirm_modify_node` 节点 -> `_ask_confirm_modify_logic`):**
+    *   调用 LLM 服务 (`llm_flow_control_service.ask_confirm_modify`) 判断用户答复（"是"/"否"）。
+    *   **分支一：用户确认 ("yes") -> `execute_modify_action`**: 执行操作。
+    *   **分支二：用户取消 ("no") -> `cancel_save_action`**: 取消操作。
+
+6.  **执行数据库操作 (`execute_modify_action` 节点):**
+    *   根据 `save_content` 判断操作类型。
+    *   读取暂存的负载 (`lastest_content_production` 或 `delete_array`)。
+    *   调用相应的 Flask API (`/update_record`, `/insert_record`, `/delete_record`)。
+    *   存储 API 结果到 `api_call_result`，并处理 API 调用错误 (`error_message`)。
+
+7.  **重置状态 (`reset_after_modify_action` 节点):**
+    *   清空本次操作相关的暂存、预览等状态变量。
+
+8.  **格式化最终回复 (`format_modify_response_action` 节点):**
+    *   调用 LLM 服务 (`llm_flow_control_service.format_modify_response`) 根据 `api_call_result` 或 `error_message` 生成最终回复。
+    *   存储到 `final_answer`。
+    *   流程结束 (END)。
+
+9.  **处理取消 (`cancel_save_action` 节点):**
+    *   清空暂存状态。
+    *   设置取消确认信息到 `final_answer`。
+    *   流程结束 (END)。
+
+10. **处理其他错误 (`handle_nothing_to_stage_action`, `handle_invalid_save_state_action`):**
+    *   设置相应的错误信息到 `final_answer`。
+    *   流程结束 (END)。
+
+总结:
+保存确认流程通过两阶段确认（暂存确认 + 最终确认）和状态标记 (`save_content`)，确保了用户意图的准确执行。它结合了路由逻辑、动作节点和 LLM 服务，实现了从用户确认到数据库操作的完整闭环，并包含了必要的错误处理和状态清理。

@@ -2,7 +2,7 @@
 
 from typing import Literal, Dict, Any
 from langgraph_crud_app.graph.state import GraphState
-from langgraph_crud_app.services.llm import llm_query_service
+from langgraph_crud_app.services.llm import llm_query_service, llm_flow_control_service
 
 # --- 主意图路由 ---
 
@@ -11,7 +11,13 @@ def classify_main_intent_node(state: GraphState) -> Dict[str, Any]:
     路由节点：调用 LLM 服务对用户查询进行主意图分类。
     """
     print("---路由节点: 主意图分类---")
-    query = state.get("query", "")
+    query = state.get("user_query", "")
+    if not query:
+        print("警告: 在主意图分类节点未获取到 user_query。")
+        # 可以直接返回错误或路由到特定处理
+        # 暂时按原逻辑继续，但 LLM 输入会是空
+        return {"main_intent": "confirm_other", "error_message": "未获取到有效的用户查询"}
+
     try:
         intent = llm_query_service.classify_main_intent(query)
         print(f"主意图分类结果: {intent}")
@@ -22,28 +28,28 @@ def classify_main_intent_node(state: GraphState) -> Dict[str, Any]:
         # 分类失败，也归入"确认/其他"分支进行处理
         return {"main_intent": "confirm_other", "error_message": error_msg}
 
-def _route_after_main_intent(state: GraphState) -> Literal[
-    "classify_query_analysis_node", # 查询/分析分支
-    "parse_modify_request_action", # 修改分支
-    "handle_add_intent",          # 新增分支
-    "handle_delete_intent",       # 删除分支
-    "handle_reset",               # 重置分支
-    "route_confirmation_entry"    # 确认/其他分支
-]:
-    """
-    路由逻辑：根据主意图分类结果决定下一个节点。
-    """
+def _route_after_main_intent(state: GraphState):
+    """根据 LLM 分类的主意图进行路由。"""
+    print(f"--- Routing based on Main Intent: {state.get('main_intent')} ---")
     intent = state.get("main_intent")
-    print(f"---路由逻辑: 根据主意图 '{intent}' 决定走向---")
+
     if intent == "query_analysis":
-        return "classify_query_analysis_node"
+        return "continue_to_query_analysis"
     elif intent == "modify":
-        return "parse_modify_request_action"
-    elif intent == "add":
-        return "handle_add_intent"
-    elif intent == "delete":
-        return "handle_delete_intent"
+        return "continue_to_modify"
+    elif intent == "add": # 为 'add' 意图添加的分支
+        # TODO: 根据 Dify 节点 1742437386323 添加预检查
+        # 检查 content_new 或 save_content 是否已填充？
+        # 暂时直接路由到新增流程开始
+        print("Routing to Add flow")
+        return "start_add_flow" 
+    elif intent == "delete": # 为 'delete' 意图添加的分支 (占位符)
+        print("Routing to Delete flow (placeholder)")
+        return "start_delete_flow"
     elif intent == "reset":
-        return "handle_reset"
-    else: # "confirm_other" 或 错误/未知
-        return "route_confirmation_entry" 
+        return "reset_flow"
+    elif intent == "confirm_other":
+        return "continue_to_confirmation"
+    else:
+        print("未知或模糊意图，路由到确认/回退。")
+        return "continue_to_confirmation" # 回退或处理歧义 

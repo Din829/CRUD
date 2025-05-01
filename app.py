@@ -6,7 +6,7 @@ from datetime import datetime
 from contextlib import contextmanager
 import locale  # 新增：支持英文日期解析
 import json
-from decimal import Decimal # 新增 Decimal 导入
+from decimal import Decimal
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -15,11 +15,11 @@ logging.basicConfig(level=logging.DEBUG)
 @contextmanager
 def get_db_connection():
     connection = pymysql.connect(
-        host=os.environ.get('DB_HOST', '192.168.0.32'),
-        port=int(os.environ.get('DB_PORT', 3306)),
+        host=os.environ.get('DB_HOST', '127.0.0.1'),
+        port=int(os.environ.get('DB_PORT', 33306)),
         user=os.environ.get('DB_USER', 'root'),
         password=os.environ.get('DB_PASSWORD', 'q75946123'),
-        database=os.environ.get('DB_NAME', 'sky_take_out'),
+        database=os.environ.get('DB_NAME', 'ai_support_platform_db'),
         charset='utf8mb4',
         cursorclass=pymysql.cursors.DictCursor
     )

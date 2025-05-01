@@ -15,3 +15,13 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # 获取环境变量中的API�
 
 # 在本地开发时，如果环境变量未设置，请手动添加你的API密钥:
 # OPENAI_API_KEY = "你的API密钥"  # 仅在本地开发使用，不要提交到版本控制 
+
+# 可以考虑将错误信息放入 agent_output 以便展示给用户
+def handle_error(error_message):
+    return {"agent_output": error_message, "error_flag": True}
+
+# Flask API 的基础 URL
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:5000") # 默认为本地开发地址
+
+# OpenAI 模型名称
+OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-4.1") # 默认模型 

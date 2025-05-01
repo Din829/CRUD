@@ -58,25 +58,25 @@ def _route_confirmation_entry_logic(state: GraphState) -> Literal[
 
 def _stage_operation_logic(state: GraphState) -> Literal[
     "stage_modify_action",
-    # "stage_add_action", # 未来扩展
+    "stage_add_action", # 添加新增暂存动作
     # "stage_delete_action", # 未来扩展
     "handle_nothing_to_stage" # 无法确定暂存哪个操作
 ]:
     """
-    路由逻辑：判断应该暂存哪种操作（目前仅实现修改）。
+    路由逻辑：判断应该暂存哪种操作。
     对应 Dify 节点: 1742272764317
     """
     content_modify = state.get("content_modify")
-    # content_new = state.get("content_new") # 未来扩展
+    content_new = state.get("content_new") # 检查新增内容
     # delete_show = state.get("delete_show") # 未来扩展
 
-    print(f"---路由逻辑: 尝试暂存，content_modify: {'非空' if content_modify else '空'}---")
+    print(f"---路由逻辑: 尝试暂存，content_modify: {'非空' if content_modify else '空'}, content_new: {'非空' if content_new else '空'}---")
 
-    # 简化版：仅检查 content_modify 是否有内容
+    # 优先级：修改 > 新增 > 删除 (暂定)
     if content_modify:
         return "stage_modify_action"
-    # elif content_new:
-    #     return "stage_add_action"
+    elif content_new:
+        return "stage_add_action" # 路由到新增暂存
     # elif delete_show:
     #     return "stage_delete_action"
     else:
@@ -85,7 +85,7 @@ def _stage_operation_logic(state: GraphState) -> Literal[
 
 def _check_staged_operation_logic(state: GraphState) -> Literal[
     "ask_confirm_modify_node",
-    # "ask_confirm_add_node", # 未来扩展
+    "ask_confirm_add_node", # 添加新增确认询问节点
     # "ask_confirm_delete_node", # 未来扩展
     "handle_invalid_save_state" # save_content 状态无效或与其他状态不符
 ]:
@@ -95,38 +95,46 @@ def _check_staged_operation_logic(state: GraphState) -> Literal[
     """
     save_content = state.get("save_content")
     content_modify = state.get("content_modify")
-    # content_new = state.get("content_new") # 未来扩展
+    content_new = state.get("content_new") # 获取新增内容状态
     # delete_show = state.get("delete_show") # 未来扩展
+    lastest_content_production = state.get("lastest_content_production") # 获取待生产数据
 
-    print(f"---路由逻辑: 检查暂存操作，save_content: '{save_content}', content_modify: {'非空' if content_modify else '空'}---")
+    print(f"---路由逻辑: 检查暂存操作，save_content: '{save_content}', content_modify: {'非空' if content_modify else '空'}, content_new: {'非空' if content_new else '空'}, lastest_content_production: {'非空' if lastest_content_production else '空'}---")
 
-    if save_content == "修改路径" and content_modify:
+    if save_content == "修改路径" and content_modify and lastest_content_production:
+        # 假设修改也需要 lastest_content_production 非空
         return "ask_confirm_modify_node"
-    # elif save_content == "新增路径" and content_new:
-    #     return "ask_confirm_add_node"
+    elif save_content == "新增路径" and content_new and lastest_content_production:
+        # 检查新增路径，需要预览文本和待生产数据都存在
+        # 复用 ask_confirm_modify_node 和 _ask_confirm_modify_logic, 因为 LLM 判断逻辑相同
+        print("路由到新增确认询问 (复用修改逻辑)")
+        return "ask_confirm_modify_node" 
     # elif save_content == "删除路径" and delete_show:
     #     return "ask_confirm_delete_node"
     else:
-        # 如果 save_content 的值与实际状态不符（例如标记为修改但 content_modify 为空）
+        # 如果 save_content 的值与实际状态不符
+        print(f"警告: save_content ('{save_content}') 与实际状态不一致。")
         return "handle_invalid_save_state"
 
-# _ask_confirm_modify_logic 将在下一步实现，需要调用 LLM 服务
+# _ask_confirm_modify_logic 将被新增和修改流程复用
 def _ask_confirm_modify_logic(state: GraphState) -> Literal[
-    "execute_modify_action", # 用户确认修改
-    "cancel_save_action"     # 用户取消修改或回复不明确
+    "execute_operation_action", # 改为通用名称
+    "cancel_save_action"     # 用户取消或回复不明确
 ]:
     """
-    路由逻辑：判断用户是否确认修改。
-    对应 Dify 节点: 1742350663522
+    路由逻辑：判断用户是否确认操作 (修改/新增/删除)。
+    对应 Dify 节点: 1742350663522 / 1742438547791 / 1742520713951
     """
-    query = state.get("query", "")
-    print(f"---路由逻辑: 判断用户确认修改, 输入: '{query}'---")
+    query = state.get("user_query", "")
+    save_content = state.get("save_content")
+    print(f"---路由逻辑: 判断用户确认 '{save_content}', 输入: '{query}'---")
 
+    # 使用通用的 yes/no 分类器
     confirmation = llm_flow_control_service.classify_yes_no(query)
 
     if confirmation == "yes":
-        print("用户确认修改，执行...")
-        return "execute_modify_action"
+        print(f"用户确认 '{save_content}'，执行...")
+        return "execute_operation_action" # 路由到统一的执行节点
     else: # "no" 或 "unknown"
-        print("用户取消修改或回复不明确，取消保存...")
+        print(f"用户取消 '{save_content}' 或回复不明确，取消保存...")
         return "cancel_save_action" 

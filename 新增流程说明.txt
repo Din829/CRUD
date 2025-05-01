@@ -1,0 +1,84 @@
+# LangGraph 新增 (Add) 流程说明 (v2025.05.02)
+
+本文档描述使用 LangGraph 实现的、允许用户通过自然语言新增数据库记录的流程。
+
+## 核心流程节点
+
+1.  **`parse_add_request_action`** (`add_actions.py`):
+    *   **输入**: `user_query`, `biaojiegou_save`, `data_sample` (来自 State)。
+    *   **处理**: 调用 LLM (`llm_add_service.parse_add_request`) 解析用户意图，生成包含待新增数据（可能含 `{{...}}` 占位符）的原始 JSON 字符串。
+    *   **输出**: 更新 `temp_add_llm_data` 状态；如果出错，则更新 `add_parse_error`。
+
+2.  **`process_add_llm_output_action`** (`add_actions.py`):
+    *   **输入**: `temp_add_llm_data` (来自 State)。
+    *   **处理**: 调用 `data_processor.clean_and_structure_llm_add_output` 清理和结构化 LLM 的原始输出，将其转换为统一的 Python 列表格式 `[{ "table_name": ..., "fields": {...} }, ...]`。然后将此列表序列化为 JSON 字符串。
+    *   **输出**: 更新 `add_structured_records_str` 状态；如果出错，则更新 `add_error_message`。
+
+3.  **`process_placeholders_action`** (`add_actions.py`):
+    *   **输入**: `add_structured_records_str` (来自 State)。
+    *   **处理**: 解析 `add_structured_records_str` 得到结构化记录列表。调用 `data_processor.process_placeholders` 处理列表中的 `{{...}}` 占位符（执行数据库查询、生成随机值等）。将处理后的列表序列化为 JSON 字符串。
+    *   **输出**: 更新 `add_processed_records_str` 状态；如果出错，则更新 `add_error_message`。
+
+4.  **`format_add_preview_action`** (`add_actions.py`):
+    *   **输入**: `add_processed_records_str`, `user_query`, `biaojiegou_save` (来自 State)。
+    *   **处理**: 解析 `add_processed_records_str` 得到处理后的记录列表 `processed_records`。调用 LLM (`llm_add_service.format_add_preview`) 生成用户友好的新增操作预览文本。
+    *   **输出**: 更新 `add_preview_text` (预览文本), `content_new` (用于暂存的预览文本), `lastest_content_production` (处理后的记录列表 `processed_records`，用于后续 API 调用)；如果出错，则更新 `add_error_message` 并设置 fallback 预览。
+
+5.  **`provide_add_feedback_action`** (`add_actions.py`):
+    *   **输入**: `add_preview_text`, `add_parse_error`, `add_error_message` (来自 State)。
+    *   **处理**: 组合预览文本或错误信息，准备最终展示给用户的反馈。
+    *   **输出**: 更新 `final_answer` 状态。
+
+6.  **`finalize_add_response`** (`add_actions.py`):
+    *   **输入**: (State)
+    *   **处理**: 空节点，确保 `provide_add_feedback_action` 的 `final_answer` 被合并到最终状态中。
+    *   **输出**: `{}` (空更新)。
+
+7.  **`handle_add_error_action`** (`add_actions.py`):
+    *   **输入**: `add_parse_error`, `add_error_message` (来自 State)。
+    *   **处理**: 通用错误处理节点，通常在路由检测到错误时进入。
+    *   **输出**: 更新 `error_flag` 状态。
+
+## 路由与图结构 (`graph_builder.py`)
+
+*   新增流程入口由主意图路由 (`main_router`) 触发，指向 `parse_add_request`。
+*   在 `parse_add_request`, `process_add_llm_output`, `process_placeholders`, `format_add_preview` 之后，都通过条件边连接到内部路由函数 `_route_add_flow_on_error`。
+    *   `_route_add_flow_on_error`: 检查 `add_parse_error` 和 `add_error_message` 状态。如果任一存在，路由到 `handle_add_error`；否则，路由到序列中的下一个处理节点 (`continue`)。
+*   `format_add_preview` 在 `continue` 时路由到 `provide_add_feedback`。
+*   `provide_add_feedback` 通过 `finalize_add_response` 节点连接到 `END`。
+*   `handle_add_error` 直接连接到 `END`。
+
+## 状态管理关键点 (`state.py`)
+
+*   **JSON 字符串传递**: 由于遇到 LangGraph 传递复杂对象 (List[Dict]) 时状态丢失的问题，`structured_add_records` 和 `processed_records` 这两个列表在节点间通过其 JSON 字符串形式 (`add_structured_records_str`, `add_processed_records_str`) 传递。接收节点需要先解析 JSON 字符串。
+*   **预览文本状态**: `add_preview_text` 用于存储 `format_add_preview_action` 生成的预览文本，供 `provide_add_feedback_action` 使用。
+*   **待执行数据**: `lastest_content_production` (类型: `List[Dict[str, Any]]`) 存储由 `format_add_preview_action` 准备好的、处理完占位符的记录列表，供确认流程中的 `execute_operation_action` 直接使用。
+*   **用户预览**: `content_new` 存储预览文本，用于在确认流程中向用户展示 (`stage_add_action`)。
+
+## 与确认流程的交互
+
+1.  新增流程通过 `provide_add_feedback` 成功向用户展示预览并请求确认（例如，提示用户输入"保存"）。流程暂时结束 (`finalize_add_response` -> `END`)。
+2.  用户输入"保存"或类似确认指令。
+3.  新一轮交互开始，主意图分类 (`main_router`) 将意图识别为 `confirm_other`。
+4.  路由到确认流程入口 (`route_confirmation_entry`)。
+5.  确认流程路由逻辑 (`confirmation_router`)：
+    *   `_route_confirmation_entry_logic`: 检测到 `save_content` 为空，路由到 `stage_operation_node`。
+    *   `_stage_operation_logic`: 检测到 `content_new` 存在（由 `format_add_preview_action` 设置），路由到 `stage_add_action`。
+6.  **`stage_add_action`** (`flow_control_actions.py`):
+    *   检查 `content_new` 和 `lastest_content_production` 是否都存在。
+    *   设置 `save_content="新增路径"`。
+    *   设置 `final_answer`，提示用户输入"是"/"否"。
+7.  用户输入"是"。
+8.  新一轮交互开始，主意图分类识别为 `confirm_other`。
+9.  确认流程路由逻辑：
+    *   `_route_confirmation_entry_logic`: 检测到 `save_content="新增路径"`，路由到 `check_staged_operation_node`。
+    *   `_check_staged_operation_logic`: 确认 `save_content`, `content_new`, `lastest_content_production` 状态一致，路由到 `ask_confirm_modify_node` (复用逻辑)。
+    *   `_ask_confirm_modify_logic`: 读取 `user_query` ("是")，调用 LLM 判断为 "yes"，路由到 `execute_operation_action`。
+10. **`execute_operation_action`** (`flow_control_actions.py`):
+    *   检测到 `save_content="新增路径"`。
+    *   直接获取 `lastest_content_production` (包含 `[{ "table_name": ..., "fields": {...} }]` 的列表)。
+    *   调用 `api_client.insert_record` 并传递该列表作为 payload。
+    *   更新 `api_call_result` 和可能的 `error_message`。
+11. **`reset_after_operation_action`** (`flow_control_actions.py`): 清理 `save_content`, `content_new`, `lastest_content_production` 等新增流程相关状态。
+12. **`format_operation_response_action`** (`flow_control_actions.py`): 调用 LLM 格式化 API 结果，更新 `final_answer`。
+13. 流程结束。
