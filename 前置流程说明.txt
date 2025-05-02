@@ -75,6 +75,7 @@
     *   修复: 在 `nodes/actions.py` 的 `process_table_names_action` 节点中，增加了对 `nl_string_to_list` 返回结果的后处理步骤，过滤掉只包含 ` ``` ` 的条目。
 *   **模型选型:**
     *   根据用户最终要求，将所有 LLM 调用统一配置为尝试使用 `"gpt-4.1"` 模型。
+*   **状态键名错误 (`query` vs `user_query`)**: 修复了在初始化流程完成之后，多个后续流程（如修改、查询/分析、确认流程的回复格式化）中的动作和路由节点错误地使用状态键 `query` 而不是正确的 `user_query` 来访问用户原始输入的问题。此错误是导致这些后续流程失败或行为异常的一个关键原因。 (影响文件包括: `modify_actions.py`, `query_actions.py`, `query_analysis_router.py`, `flow_control_actions.py`)
 
 总结 (最终状态):
 经过上述调试和修复，当前的前置流程能够稳定、正确地运行。它可以在应用启动时检查状态，按需执行包含 API 调用和 LLM 处理的初始化序列，准备好必要的数据库元数据 (`biaojiegou_save`, `table_names`, `data_sample`)，并将状态持久化以供后续调用。错误处理和路由逻辑也得到了验证。

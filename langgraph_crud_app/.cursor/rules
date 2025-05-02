@@ -45,7 +45,7 @@ Prompt 模板编写规范
 - 在编写 LangChain Prompt 模板时，必须区分真实变量和示例文本中的大括号。
 
 用途：真实需要替换的变量
-写法示例：{query} {schema_str}
+写法示例：{user_query} {schema_str}
 说明：使用单大括号，LangChain 会在运行时替换
 
 用途：示例或固定格式文本

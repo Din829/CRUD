@@ -9,10 +9,10 @@ from langgraph_crud_app.services.llm import llm_query_service
 
 def classify_query_analysis_node(state: GraphState) -> Dict[str, Any]:
     """
-    路由节点：调用 LLM 服务对查询/分析意图进行子分类。
+    路由节点：调用 LLM 服务对用户查询进行子意图分类 (query/analysis)。
     """
-    print("---路由节点: 查询/分析 子意图分类---")
-    query = state.get("query", "")
+    print("---路由节点: 查询/分析子意图分类---")
+    query = state.get("user_query", "")
     try:
         sub_intent = llm_query_service.classify_query_analysis_intent(query)
         print(f"查询/分析 子意图分类结果: {sub_intent}")

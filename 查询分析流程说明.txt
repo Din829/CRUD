@@ -7,7 +7,7 @@
 流程步骤:
 
 1.  **查询/分析 子意图分类 (`classify_query_analysis_node` 节点):**
-    *   调用 `llm_query_service.classify_query_analysis_intent` 函数处理用户原始查询 (`query`)。
+    *   调用 `llm_query_service.classify_query_analysis_intent` 函数处理用户原始查询 (`user_query`)。
     *   将用户意图进一步细分为 "查询 (`query`)" 或 "分析 (`analysis`)"。
     *   将分类结果存储在状态的 `query_analysis_intent` 字段中。
     *   对应 Dify 节点: '1743298467743'。
@@ -20,14 +20,14 @@
 3.  **SQL 生成 (分支):**
     *   **a. 生成 SELECT SQL (`generate_select_sql` 节点):**
         *   调用 `llm_query_service.generate_select_sql` 函数。
-        *   输入: 用户查询 (`query`), Schema (`biaojiegou_save`), 表名列表 (`table_names`), 数据示例 (`data_sample`)。
+        *   输入: 用户查询 (`user_query`), Schema (`biaojiegou_save`), 表名列表 (`table_names`), 数据示例 (`data_sample`)。
         *   输出: 生成的 SELECT SQL 语句，或表示需要澄清的错误消息 ("ERROR: ...")。
         *   结果存储在 `sql_query_generated` 状态字段，错误信息（如有）存储在 `final_answer` 和 `error_message`。
         *   成功生成后，流程进入第 4 步 (`clean_sql`)。
         *   对应 Dify 节点: '1742268678777'。
     *   **b. 生成分析 SQL (`generate_analysis_sql` 节点):**
         *   调用 `llm_query_service.generate_analysis_sql` 函数。
-        *   输入: 同上。
+        *   输入: 用户查询 (`user_query`), Schema (`biaojiegou_save`), 表名列表 (`table_names`), 数据示例 (`data_sample`)。
         *   输出: 生成的分析 SQL 语句 (含 COUNT, GROUP BY 等)，或表示需要澄清的错误消息 ("ERROR: ...")。
         *   结果存储和错误处理同上。
         *   成功生成后，流程进入第 4 步 (`clean_sql`)。
@@ -64,14 +64,14 @@
 8.  **最终处理/回复 (分支):**
     *   **a. 处理查询结果 (`format_query_result` 节点):**
         *   调用 `llm_query_service.format_query_result` 函数。
-        *   输入: 用户查询 (`query`), SQL 结果 (`sql_result`)。
+        *   输入: 用户查询 (`user_query`), SQL 结果 (`sql_result`)。
         *   输出: 格式化后的用户友好回复。
         *   将结果存储在 `final_answer` 中。
         *   对应 Dify 节点: '1742434616785'。
         *   流程结束 (END)。
     *   **b. 分析分析结果 (`analyze_analysis_result` 节点):**
         *   调用 `llm_query_service.analyze_analysis_result` 函数。
-        *   输入: 用户查询 (`query`), SQL 结果 (`sql_result`), Schema (`biaojiegou_save`), 表名列表 (`table_names`)。
+        *   输入: 用户查询 (`user_query`), SQL 结果 (`sql_result`), Schema (`biaojiegou_save`), 表名列表 (`table_names`)。
         *   输出: 包含总结、洞察和建议的分析报告。
         *   将结果存储在 `final_answer` 中。
         *   对应 Dify 节点: '1743298860520'。
@@ -93,4 +93,8 @@
         *   流程结束 (END)。
 
 总结:
-该流程实现了对用户查询和分析请求的完整处理闭环，包括意图理解、SQL生成、数据库交互、错误处理和结果呈现。 
+该流程实现了对用户查询和分析请求的完整处理闭环，包括意图理解、SQL生成、数据库交互、错误处理和结果呈现。
+
+## 调试与修复
+
+*   **状态键名错误 (`query` vs `user_query`)**: 修复了一个影响广泛的错误。此前，查询/分析流程中的多个关键节点，包括 `classify_query_analysis_node`（用于子意图分类）、`generate_select_sql_action`（生成查询 SQL）、`generate_analysis_sql_action`（生成分析 SQL）、`format_query_result_action`（格式化结果）和 `analyze_analysis_result_action`（分析结果），都错误地使用了 `state.get('query')` 或 `state.get("query")` 来获取用户输入。正确的状态键应为 `user_query`。这个错误导致这些节点无法接收到用户的实际查询内容，从而使得 LLM 调用失败、无法生成正确的 SQL 或无法格式化/分析结果。现已将所有相关实例修正为使用 `state.get('user_query')`。 

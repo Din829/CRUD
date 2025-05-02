@@ -8,7 +8,7 @@
 
 **0.  (新增) 检查直接修改 ID 意图:**
     *   这是修改流程的最先一步，发生在 `generate_modify_context_sql_action` 节点内部。
-    *   获取用户原始查询 (`query`)。
+    *   获取用户原始查询 (`user_query`)。
     *   调用 `llm_modify_service.check_for_direct_id_modification_intent` 函数。
     *   **目的**: 使用 LLM 判断用户是否**明确且直接地**要求更改记录的主键 ID 值。
     *   如果 LLM 检测到此意图，则设置 `final_answer` 为拒绝消息（"检测到您可能明确要求修改记录的 ID...不支持此操作..."），设置内部 `error_message`，并阻止后续步骤的执行，流程提前结束。
@@ -16,7 +16,7 @@
 
 1.  **生成上下文查询 SQL (`generate_modify_context_sql_action` 节点):**
     *   *此节点现在包含了步骤 0 的检查逻辑。* 如果检查通过：
-    *   调用 `llm_modify_service.generate_modify_context_sql` 函数处理用户原始查询 (`query`) 以及数据库元数据 (`biaojiegou_save`, `table_names`, `data_sample`)。
+    *   调用 `llm_modify_service.generate_modify_context_sql` 函数处理用户原始查询 (`user_query`) 以及数据库元数据 (`biaojiegou_save`, `table_names`, `data_sample`)。
     *   **目的**: 生成一个 SELECT SQL 语句，用于查询用户意图所涉及记录的**当前状态**。
     *   LLM Prompt 设计为可以处理多表关联查询，返回固定格式的字段（table_name, id, field1, field2, extra）。
     *   生成的 SQL 存储在状态的 `modify_context_sql` 字段。
@@ -32,7 +32,7 @@
     *   **注意**: 即使查询结果为空 (`'[]'`)，也不会视为错误，因为这对于后续 LLM 判断记录是否存在是有效信息。
 
 3.  **解析修改请求 (`parse_modify_request_action` 节点):**
-    *   获取用户原始查询 (`query`)、数据库元数据以及上一步获取的**上下文查询结果** (`modify_context_result`)。
+    *   获取用户原始查询 (`user_query`)、数据库元数据以及上一步获取的**上下文查询结果** (`modify_context_result`)。
     *   调用 `llm_modify_service.parse_modify_request` 函数。
     *   **目的**: 结合所有信息（特别是记录的当前状态），生成描述具体修改操作的 JSON 对象字符串（格式：`{"table_name": [op1, op2, ...]}`）。
     *   LLM Prompt 指示它利用 `modify_context_result` 进行计算、确认记录等。
@@ -65,3 +65,7 @@
 
 总结:
 新的修改流程通过在最开始增加 LLM 意图检查步骤，主动拦截并拒绝了明确要求修改主键 ID 的危险操作，提高了安全性。同时保留了原有的上下文查询步骤，使 LLM 能够获取待修改记录的实时信息，以处理其他复杂的修改请求。
+
+## 调试与修复
+
+*   **状态键名错误 (`query` vs `user_query`)**: 修复了一个关键错误。之前，`generate_modify_context_sql_action` 和 `parse_modify_request_action` 节点错误地尝试使用 `state.get('query')` 而不是正确的 `state.get('user_query')` 来获取用户的原始输入。这导致在这些节点中无法获取到有效的用户查询字符串，使得后续的 LLM 调用（如生成上下文 SQL 或解析修改请求）因缺少输入而失败或产生错误结果，最终导致修改流程无法正确执行。现已将所有相关代码修正为使用 `state.get('user_query')`。

@@ -16,7 +16,7 @@ def generate_select_sql_action(state: GraphState) -> Dict[str, Any]:
     对应 Dify 节点: '1742268678777'
     """
     print("---节点: 生成 SELECT SQL---")
-    query = state.get("query", "")
+    query = state.get("user_query", "")
     schema = state.get("biaojiegou_save", "{}")
     table_names = state.get("table_names", [])
     data_sample = state.get("data_sample", "{}")
@@ -40,7 +40,7 @@ def generate_select_sql_action(state: GraphState) -> Dict[str, Any]:
 def generate_analysis_sql_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：调用 LLM 服务生成分析 SQL 查询。"""
     print("---节点: 生成分析 SQL---")
-    query = state.get("query", "")
+    query = state.get("user_query", "")
     schema = state.get("biaojiegou_save", "{}")
     table_names = state.get("table_names", [])
     data_sample = state.get("data_sample", "{}")
@@ -121,7 +121,7 @@ def handle_clarify_analysis_action(state: GraphState) -> Dict[str, Any]:
 def format_query_result_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：调用 LLM 服务格式化查询结果。"""
     print("---节点: 格式化查询结果---")
-    query = state.get("query", "")
+    query = state.get("user_query", "")
     sql_result = state.get("sql_result", "[]")
     try:
         formatted_answer = llm_query_service.format_query_result(query, sql_result)
@@ -134,7 +134,7 @@ def format_query_result_action(state: GraphState) -> Dict[str, Any]:
 def analyze_analysis_result_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：调用 LLM 服务分析分析结果。"""
     print("---节点: 分析分析结果---")
-    query = state.get("query", "")
+    query = state.get("user_query", "")
     sql_result = state.get("sql_result", "[]")
     schema = state.get("biaojiegou_save", "{}")
     table_names = state.get("table_names", [])

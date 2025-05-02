@@ -21,7 +21,7 @@ def generate_modify_context_sql_action(state: GraphState) -> Dict[str, Any]:
     LLM 生成用于获取修改操作所需上下文的 SELECT SQL。
     修改：在生成 SQL 前，调用 LLM 服务检查用户查询是否明确要求修改 ID。
     """
-    query = state.get('query')
+    query = state.get('user_query')
     if not query:
         return {"error_message": "用户查询为空，无法生成修改上下文 SQL。"}
 
@@ -136,7 +136,7 @@ def parse_modify_request_action(state: GraphState) -> Dict[str, Any]:
     节点动作：调用 LLM 服务解析用户的修改请求，利用上下文查询结果。
     """
     logger.info("---节点: 解析修改请求--- marginalised")
-    query = state.get("query", "")
+    query = state.get("user_query", "")
     schema = state.get("biaojiegou_save")
     tables = state.get("table_names")
     sample = state.get("data_sample")
@@ -185,7 +185,8 @@ def parse_modify_request_action(state: GraphState) -> Dict[str, Any]:
 
 def validate_and_store_modification_action(state: GraphState) -> Dict[str, Any]:
     """
-    节点动作：验证 LLM 输出的 JSON 格式，并将有效的原始 JSON 字符串存入 content_modify。
+    节点动作：验证 LLM 输出的 JSON 格式，存储预览字符串 (`content_modify`)
+              并解析/转换/存储 API 负载 (`lastest_content_production`)。
     对应 Dify Code 节点 '1742439839388' 的部分逻辑（简化版，仅做 JSON 格式校验）
     以及 Dify Assigner 节点 '1742440011915' 的逻辑。
     """
@@ -196,25 +197,59 @@ def validate_and_store_modification_action(state: GraphState) -> Dict[str, Any]:
     # 如果上一步 LLM 调用就出错了，直接传递错误
     if error_message:
         logger.info(f"上一步骤存在错误: {error_message}")
-        return {"error_message": error_message, "content_modify": None}
+        return {"error_message": error_message, "content_modify": None, "lastest_content_production": None}
 
     # 修改：如果 raw_output 为空或 '[]'，说明上一步已请求澄清，
     # 此节点不应设置错误，只需返回空字典让流程继续，保留上一步设置的 final_answer。
     if not raw_output or raw_output.strip() == '[]':
-        logger.info("上一步骤未能解析出修改内容或请求了澄清，跳过验证。")
+        logger.info("上一步骤未能解析出修改内容或请求了澄清，跳过验证和存储。")
         return {}
 
     try:
         # 尝试解析 JSON 以确保格式基本正确
-        # 我们存储的是原始字符串，但需要验证其有效性
-        json.loads(raw_output)
+        llm_parsed_data = json.loads(raw_output)
         logger.info("LLM 输出 JSON 格式有效。")
 
+        # --- 新增：转换 LLM 输出为 API 负载格式 (List[Dict]) ---
+        api_payload = []
+        if isinstance(llm_parsed_data, dict):
+            for table_name, operations in llm_parsed_data.items():
+                if isinstance(operations, list):
+                    for op in operations:
+                        if isinstance(op, dict):
+                            # 构建 API 期望的单条操作字典
+                            single_op_payload = {
+                                "table_name": table_name,
+                                "primary_key": op.get("primary_key"),
+                                "primary_value": op.get("primary_value"),
+                                "target_primary_value": op.get("target_primary_value", ""), # 确保存在
+                                "update_fields": op.get("fields", {}) # 确保存在
+                            }
+                            # 检查基本字段是否存在 (可选但推荐)
+                            if single_op_payload["primary_key"] is not None and single_op_payload["primary_value"] is not None:
+                                api_payload.append(single_op_payload)
+                            else:
+                                logger.warning(f"跳过格式不完整的修改操作（缺少主键信息）: {op}")
+                        else:
+                             logger.warning(f"LLM 输出中表 '{table_name}' 的操作项不是字典: {op}")
+                else:
+                     logger.warning(f"LLM 输出中表 '{table_name}' 的值不是列表: {operations}")
+        else:
+            raise ValueError("LLM 解析出的数据不是预期的字典格式。")
+        
+        if not api_payload:
+             raise ValueError("未能从 LLM 输出中成功转换出任何有效的 API 修改操作。")
+        
+        logger.info(f"成功转换 API 负载: {api_payload}")
+        # --- 转换结束 ---
+
         # 清空 save_content 确保后续确认流程干净
-        # 清空 error_message 因为 JSON 格式有效
-        # 将原始有效的 JSON 字符串存入 content_modify
+        # 清空 error_message 因为 JSON 格式有效且转换成功
+        # 将原始有效的 JSON 字符串存入 content_modify (用于预览)
+        # 将转换后的列表存入 lastest_content_production (用于 API 调用)
         return {
-            "content_modify": raw_output,
+            "content_modify": raw_output, # 预览内容
+            "lastest_content_production": api_payload, # API 负载
             "save_content": None,
             "error_message": None
         }
@@ -222,13 +257,18 @@ def validate_and_store_modification_action(state: GraphState) -> Dict[str, Any]:
     except json.JSONDecodeError as e:
         error_msg = f"LLM 输出的修改内容无法解析为有效的 JSON: {e}"
         logger.error(error_msg)
-        # 解析失败，设置错误信息，清空 content_modify
-        return {"error_message": error_msg, "content_modify": None}
+        # 解析失败，设置错误信息，清空相关状态
+        return {"error_message": error_msg, "content_modify": None, "lastest_content_production": None}
+    except ValueError as e:
+        # 捕获转换过程中可能抛出的 ValueError
+        error_msg = f"转换 LLM 输出为 API 负载时出错: {e}"
+        logger.error(error_msg)
+        return {"error_message": error_msg, "content_modify": None, "lastest_content_production": None}
     except Exception as e:
         # 其他潜在错误
-        error_msg = f"验证修改内容时发生意外错误: {e}"
+        error_msg = f"验证和存储修改内容时发生意外错误: {e}"
         logger.error(error_msg)
-        return {"error_message": error_msg, "content_modify": None}
+        return {"error_message": error_msg, "content_modify": None, "lastest_content_production": None}
 
 def handle_modify_error_action(state: GraphState) -> Dict[str, Any]:
     """

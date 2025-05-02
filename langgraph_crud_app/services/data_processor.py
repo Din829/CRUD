@@ -212,136 +212,102 @@ def extract_placeholders(structured_records: List[Dict[str, Any]]) -> Set[str]:
 
 def process_placeholders(structured_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    遍历结构化记录，查找并处理 {{...}} 占位符。
-    - {{db(SQL)}}: 执行 SQL 查询并替换为结果 (假设返回单值)。
-    - {{random(type)}}: 生成指定类型的随机值 (string, integer, uuid) 并替换。
-    - {{new(...)}}: 保留原样。
+    处理结构化记录中的占位符 ( {{...}} )。
+    支持 {{db(...)}} 和 {{random(...)}} 格式。
+    修改：明确忽略 {{new(...)}} 格式，让其原样通过。
 
     Args:
-        structured_records: 从 clean_and_structure_llm_add_output 返回的记录列表。
+        structured_records: 包含占位符的结构化记录列表。
 
     Returns:
-        处理完成的记录列表，准备提交给 API。
-
+        处理完占位符后的结构化记录列表。
+    
     Raises:
-        ValueError: 如果 db 查询失败、未返回结果或 random 类型无效。
-        Exception: 其他执行错误。
+        ValueError: 如果遇到不支持的占位符类型或执行查询出错。
     """
     print("--- 处理占位符替换 ({{...}} format) ---")
     processed_records = []
+    # 深拷贝以避免修改原始状态？或者假设调用者处理？暂时直接修改
 
-    # 提取所有需要处理的占位符及其位置，避免重复查询/生成
-    placeholders_to_resolve: Dict[str, Any] = {} # Map placeholder content -> resolved value
-    placeholders_in_records: List[Dict[str, Any]] = [] # Store record index, field, full placeholder string
+    for record in structured_records:
+        processed_fields = {}
+        if not isinstance(record, dict) or "fields" not in record or not isinstance(record["fields"], dict):
+             print(f"警告：跳过格式不正确的记录（缺少 fields 或非字典）: {record}")
+             processed_records.append(record) # 保留原始记录？或跳过？暂定保留
+             continue
 
-    for idx, record in enumerate(structured_records):
-        fields = record.get("fields", {})
-        for field, value in fields.items():
+        for field, value in record["fields"].items():
             if isinstance(value, str):
-                # finditer 返回匹配对象，包含位置信息，方便替换
-                for match in PLACEHOLDER_PATTERN.finditer(value):
-                    full_placeholder = match.group(0) # e.g., "{{db(SELECT ...)}}"
-                    placeholder_content = match.group(1).strip() # e.g., "db(SELECT ...)"
-                    # 记录占位符信息以供后续处理
-                    placeholders_in_records.append({
-                        "record_idx": idx,
-                        "field": field,
-                        "full_placeholder": full_placeholder,
-                        "content": placeholder_content
-                    })
-                    # 如果尚未解析，则添加到待解析字典
-                    if placeholder_content not in placeholders_to_resolve:
-                         placeholders_to_resolve[placeholder_content] = None # Mark as unresolved
+                match = PLACEHOLDER_PATTERN.search(value) # 使用 search 查找单个占位符
+                if match:
+                    placeholder_content = match.group(1).strip()
+                    print(f"  正在解析占位符: '{placeholder_content}' for field '{field}'")
+                    
+                    # --- 新增：忽略 {{new(...)}} --- 
+                    if placeholder_content.lower().startswith("new("):
+                         print(f"    忽略占位符 new(): '{placeholder_content}'")
+                         processed_fields[field] = value # 保留原始值 {{new(...)}}
+                         continue # 处理下一个字段
+                    # --- 结束新增 --- 
 
-    # 解析所有唯一的占位符内容
-    for content, current_value in placeholders_to_resolve.items():
-        if current_value is not None: # Already resolved (e.g., duplicate placeholder)
-            continue
-
-        print(f"  Resolving placeholder content: {content}")
-        resolved_value = None
-        try:
-            if content.startswith("db(") and content.endswith(")"):
-                sql = content[3:-1].strip()
-                if not sql:
-                     raise ValueError("db() placeholder contains empty SQL query.")
-                print(f"    Executing DB query: {sql}")
-                result_str = execute_query(sql) # Call API client
-                if is_query_result_empty(result_str):
-                     raise ValueError(f"Query returned no results for: {sql}")
-                # 假设查询返回 [{ "column_name": value }]
-                result_list = json.loads(result_str)
-                if not result_list:
-                     raise ValueError(f"Query returned empty list for: {sql}")
-                first_row = result_list[0]
-                if not first_row:
-                     raise ValueError(f"Query returned empty row for: {sql}")
-                # 取第一行的第一个值
-                resolved_value = str(next(iter(first_row.values())))
-                print(f"    -> DB result: {resolved_value}")
-
-            elif content.startswith("random(") and content.endswith(")"):
-                rand_type = content[7:-1].strip().lower()
-                print(f"    Generating random value of type: {rand_type}")
-                if rand_type == "string":
-                     # Generate a simple 8-char alphanumeric string
-                     chars = string.ascii_letters + string.digits
-                     resolved_value = ''.join(random.choice(chars) for _ in range(8))
-                elif rand_type == "integer":
-                     # Generate a random 6-digit integer
-                     resolved_value = str(random.randint(100000, 999999))
-                elif rand_type == "uuid":
-                     resolved_value = str(uuid.uuid4())
+                    # 处理 {{db(...)}} 
+                    if placeholder_content.lower().startswith("db(") and placeholder_content.endswith(")"):
+                        query = placeholder_content[3:-1].strip()
+                        print(f"    占位符类型: db, 执行查询: '{query}'")
+                        try:
+                            query_result_str = execute_query(query)
+                            query_result = json.loads(query_result_str)
+                            # 假设查询只返回一行一列
+                            if isinstance(query_result, list) and len(query_result) == 1 and isinstance(query_result[0], dict):
+                                first_row = query_result[0]
+                                if len(first_row) == 1:
+                                    resolved_value = list(first_row.values())[0]
+                                    print(f"    查询结果 (单值): {resolved_value}")
+                                    processed_fields[field] = resolved_value
+                                else:
+                                    # 如果返回多列，可以选择返回整个字典或报错
+                                    print(f"    警告：db 查询 '{query}' 返回了多列，将使用整个字典。")
+                                    processed_fields[field] = first_row # 或者抛出错误？
+                            elif isinstance(query_result, list) and not query_result: # 空列表
+                                 print(f"    警告：db 查询 '{query}' 返回空结果，将使用 None。")
+                                 processed_fields[field] = None # 或者空字符串 ''?
+                            else:
+                                raise ValueError(f"db 查询 '{query}' 的结果格式无法解析为单值: {query_result_str}")
+                        except Exception as e:
+                            print(f"    错误：执行 db 查询 '{query}' 或处理结果失败: {e}")
+                            raise ValueError(f"处理 db 占位符失败: {e}")
+                    
+                    # 处理 {{random(...)}}    
+                    elif placeholder_content.lower().startswith("random(") and placeholder_content.endswith(")"):
+                        random_type = placeholder_content[7:-1].strip().lower()
+                        print(f"    占位符类型: random, 类型: '{random_type}'")
+                        resolved_value = None
+                        if random_type == "string":
+                            resolved_value = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+                        elif random_type == "number":
+                            resolved_value = random.randint(1, 1000) 
+                        elif random_type == "uuid":
+                            resolved_value = str(uuid.uuid4())
+                        # 可以添加更多随机类型，例如 email, phone 等
+                        else:
+                            print(f"    错误：不支持的 random 类型 '{random_type}'")
+                            raise ValueError(f"不支持的 random 类型: {random_type}")
+                        print(f"    生成随机值: {resolved_value}")
+                        processed_fields[field] = resolved_value
+                        
+                    else:
+                        # 处理无法识别的占位符
+                        print(f"    错误：无法识别的占位符内容: '{placeholder_content}'")
+                        raise ValueError(f"无法识别的占位符内容: {placeholder_content}")
                 else:
-                     raise ValueError(f"Unsupported random type: {rand_type}")
-                print(f"    -> Random value: {resolved_value}")
-
-            elif content.startswith("new(") and content.endswith(")"):
-                 print(f"    Keeping 'new' placeholder: {content}")
-                 resolved_value = f"{{{{{content}}}}}" # Keep the full placeholder
-
+                    # 不是占位符，保留原始值
+                    processed_fields[field] = value
             else:
-                 # 如果不是已知类型，可以选择报错或保留原样
-                 # Dify 的代码似乎会报错，我们也选择报错
-                 print(f"    Unrecognized placeholder content type: {content}")
-                 raise ValueError(f"无法识别的占位符内容: {content}")
+                # 非字符串值，直接保留
+                processed_fields[field] = value
+        
+        # 更新记录的 fields
+        processed_records.append({"table_name": record["table_name"], "fields": processed_fields})
 
-            placeholders_to_resolve[content] = resolved_value
-
-        except ValueError as ve: # Catch specific ValueErrors from processing
-            print(f"  Error resolving placeholder '{content}': {ve}")
-            raise # Re-raise to stop processing this record set
-        except Exception as e:
-            print(f"  Unexpected error resolving placeholder '{content}': {e}")
-            # Wrap other exceptions in ValueError to signal failure
-            raise ValueError(f"处理占位符 '{content}' 时出错: {e}") from e
-
-
-    # 创建新的记录列表，用解析/生成的值替换占位符
-    # 使用 deepcopy 可能更安全，但这里简化处理，假设不修改原始 records
-    processed_records = [record.copy() for record in structured_records]
-    for p_info in placeholders_in_records:
-        record_idx = p_info["record_idx"]
-        field = p_info["field"]
-        full_placeholder = p_info["full_placeholder"]
-        content = p_info["content"]
-
-        resolved_value = placeholders_to_resolve.get(content)
-
-        # 获取当前字段的值（可能已被其他占位符部分替换）
-        current_field_value = processed_records[record_idx]["fields"][field]
-
-        if resolved_value is not None and isinstance(current_field_value, str):
-             # 替换字段值中的特定占位符
-             # 注意: 如果一个字段中有多个相同的占位符，都会被替换
-             updated_value = current_field_value.replace(full_placeholder, str(resolved_value))
-             processed_records[record_idx]["fields"][field] = updated_value
-             print(f"  Record {record_idx}, Field '{field}': Replaced '{full_placeholder}' with '{resolved_value}' -> '{updated_value}'")
-        elif resolved_value is None:
-             # 这理论上不应该发生，因为我们在前面处理了所有占位符
-             # 但作为保险，如果没找到解析值，记录警告
-             print(f"警告: 在记录 {record_idx} 字段 '{field}' 中找不到占位符 '{content}' 的解析值。")
-
-
-    print(f"处理后的记录: {processed_records}")
+    print(f"--- 占位符处理完成。处理后记录: {processed_records} ---")
     return processed_records 

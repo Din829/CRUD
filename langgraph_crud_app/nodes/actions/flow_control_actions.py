@@ -181,7 +181,7 @@ def execute_operation_action(state: GraphState) -> Dict[str, Any]:
             api_call_result = {"error": error_message}
             
     elif save_content == "新增路径":
-        # --- 执行新增 ---
+        # --- 执行新增 --- 
         # 修改：直接从 lastest_content_production 获取处理后的 List[Dict]
         latest_production = state.get("lastest_content_production") 
         # 移除: add_processed_records = state.get("add_processed_records") # 这不再需要
@@ -292,7 +292,7 @@ def format_operation_response_action(state: GraphState) -> Dict[str, Any]:
     api_result_str = state.get("api_call_result")
     error_message = state.get("error_message") # 获取执行阶段的错误
     save_content = state.get("save_content") # 获取操作类型 (例如: '修改路径', '新增路径')
-    query = state.get("query", "") # 获取原始用户查询
+    query = state.get("user_query", "") # 修改此行: 获取原始用户查询
     final_answer = "操作已提交。"
     op_type_str = {"修改路径": "修改", "新增路径": "新增", "删除路径": "删除"}.get(save_content, "未知操作")
 

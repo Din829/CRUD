@@ -8,7 +8,7 @@
 
 1.  **主意图分类 (`classify_main_intent_node` 节点):**
     *   这是初始化之后的主流程入口。
-    *   调用 `llm_query_service.classify_main_intent` 函数处理用户查询 (`query`)。
+    *   调用 `llm_query_service.classify_main_intent` 函数处理用户查询 (`user_query`)。
     *   将用户的主要意图分类为以下几种之一（存储在 `main_intent` 状态字段）：
         *   `query_analysis`: 查询或分析数据。
         *   `modify`: 修改现有数据。

@@ -41,8 +41,9 @@
 7.  **重置状态 (`reset_after_modify_action` 节点):**
     *   清空本次操作相关的暂存、预览等状态变量。
 
-8.  **格式化最终回复 (`format_modify_response_action` 节点):**
-    *   调用 LLM 服务 (`llm_flow_control_service.format_modify_response`) 根据 `api_call_result` 或 `error_message` 生成最终回复。
+8.  **格式化最终回复 (`format_modify_response_action` / `format_operation_response_action` 节点):**
+    *   调用 LLM 服务 (`llm_flow_control_service.format_modify_response` / `llm_flow_control_service.format_api_result`) 根据 `api_call_result` 或 `error_message` 生成最终回复。
+    *   **（已修复）注意**: 此节点在格式化回复时需要引用用户的原始查询。之前曾错误地使用 `state.get('query')` 获取此信息，现已修正为 `state.get('user_query')`。
     *   存储到 `final_answer`。
     *   流程结束 (END)。
 

@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import locale  # 新增：支持英文日期解析
 import json
 from decimal import Decimal
+import re # <--- 新增导入
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -269,12 +270,26 @@ def insert_record():
     
     app.logger.debug(f"Parsed JSON data: {data}")
 
-    if isinstance(data, list):
-        records = data
-    elif isinstance(data, dict):
-        records = [{"table_name": data.get("table_name"), "fields": data.get("fields", [])}]
+    # 确保输入是列表格式
+    if isinstance(data, dict):
+        # 兼容 LLM 直接输出 {"table": [fields]} 或 {"result": {"table": [fields]}} 的情况
+        if "result" in data and isinstance(data["result"], dict):
+             data_to_process = data["result"]
+        else:
+             data_to_process = data
+        
+        records = []
+        for table_name, fields_list in data_to_process.items():
+             if isinstance(fields_list, list):
+                  for fields in fields_list:
+                       records.append({"table_name": table_name, "fields": fields})
+             elif isinstance(fields_list, dict): # 处理单个记录的情况
+                  records.append({"table_name": table_name, "fields": fields_list})
+    elif isinstance(data, list):
+        records = data # 假设列表内已经是 { "table_name": ..., "fields": ...} 格式
     else:
-        return jsonify({"error": "Request body must be a list or dict"}), 400
+        return jsonify({"error": "Request body must be a list or dict representing records"}), 400
+
 
     if not records:
         return jsonify({"error": "No records provided"}), 400
@@ -282,103 +297,255 @@ def insert_record():
     with get_db_connection() as connection:
         try:
             with connection.cursor() as cursor:
+                connection.begin() # 显式开启事务
+
                 results = []
-                inserted_ids = {}  # 记录主表插入结果，如 {"<new_setmeal_id>": 50}
+                generated_keys = {} # 存储生成的主键: {"table_name.pk_name": pk_value}
+                schema_cache = {} # 缓存表结构
+                
+                # --- 预缓存所有涉及表的 Schema ---
+                all_table_names = set(r.get("table_name") for r in records if isinstance(r, dict) and r.get("table_name"))
+                for table_name in all_table_names:
+                    if table_name not in schema_cache:
+                         try:
+                              cursor.execute(f"DESCRIBE `{table_name}`") # 使用反引号处理特殊表名
+                              schema_cache[table_name] = {row["Field"]: {
+                                   "type": row["Type"].lower(),
+                                   "null": row["Null"],
+                                   "key": row["Key"],
+                                   "default": row["Default"],
+                                   "extra": row.get("Extra", "") # 获取 Extra 信息 (包含 auto_increment)
+                              } for row in cursor.fetchall()}
+                              app.logger.debug(f"Cached schema for table: {table_name}")
+                         except Exception as e:
+                              raise ValueError(f"Failed to get schema for table '{table_name}': {e}")
 
+                # 定义占位符正则
+                NEW_PLACEHOLDER_PATTERN = re.compile(r'\{\{new\(([^)]+)\)\}\}')
+
+                # --- 分离独立记录和依赖记录 ---
+                independent_records = []
+                dependent_records = []
                 for record in records:
-                    if isinstance(record, str):
-                        try:
-                            record = json.loads(record)
-                        except json.JSONDecodeError as e:
-                            raise ValueError(f"Invalid record format: {str(e)}")
-                    
-                    table_name = record.get("table_name")
-                    fields_list = record.get("fields", [])
-                    
-                    if not table_name or not fields_list:
-                        raise ValueError(f"Missing table_name or fields for {table_name}")
-                    if not isinstance(fields_list, list):
-                        fields_list = [fields_list]
+                    has_dependency = False
+                    if isinstance(record, dict) and "fields" in record and isinstance(record["fields"], dict):
+                        for value in record["fields"].values():
+                            if isinstance(value, str) and NEW_PLACEHOLDER_PATTERN.search(value):
+                                has_dependency = True
+                                break
+                    if has_dependency:
+                        dependent_records.append(record)
+                    else:
+                        independent_records.append(record)
+                
+                app.logger.debug(f"Independent records: {len(independent_records)}")
+                app.logger.debug(f"Dependent records: {len(dependent_records)}")
 
-                    cursor.execute(f"DESCRIBE {table_name}")
-                    schema = {row["Field"]: {
-                        "type": row["Type"].lower(),
-                        "null": row["Null"],
-                        "key": row["Key"],
-                        "default": row["Default"]
-                    } for row in cursor.fetchall()}
-                    app.logger.debug(f"Schema for {table_name}: {schema}")
+                # --- 辅助函数：执行单条插入并记录主键 ---
+                def execute_single_insert(record_data, current_generated_keys):
+                    table_name = record_data.get("table_name")
+                    fields = record_data.get("fields", {})
+                    
+                    if not table_name or not fields:
+                        raise ValueError(f"Invalid record data: {record_data}")
+
+                    schema = schema_cache.get(table_name)
+                    if not schema:
+                        raise ValueError(f"Schema not found for table: {table_name}")
 
                     primary_key = next((f for f, v in schema.items() if v["key"] == "PRI"), None)
                     if not primary_key:
                         raise ValueError(f"No primary key found for table {table_name}")
+                    
+                    is_auto_increment = "auto_increment" in schema.get(primary_key, {}).get("extra", "")
 
-                    for fields in fields_list:
-                        # 替换主键占位符，如 <new_setmeal_id>
-                        for k, v in fields.items():
-                            if isinstance(v, str) and v.startswith("<new_") and v.endswith("_id>"):
-                                if v in inserted_ids:
-                                    fields[k] = inserted_ids[v]
-                                else:
-                                    raise ValueError(f"占位符 {v} 未定义，主表可能尚未插入")
+                    # 处理占位符替换 (仅对依赖记录有效，独立记录此循环为空)
+                    resolved_fields = {}
+                    for field, value in fields.items():
+                         if field not in schema:
+                              app.logger.warning(f"Field '{field}' not found in schema for table '{table_name}', skipping.")
+                              continue
+                         
+                         resolved_value = value
+                         if isinstance(value, str):
+                              match = NEW_PLACEHOLDER_PATTERN.search(value)
+                              if match:
+                                   dependency_key = match.group(1).strip() # e.g., "users.id"
+                                   if dependency_key in current_generated_keys:
+                                        actual_id = current_generated_keys[dependency_key]
+                                        resolved_value = actual_id # 替换占位符
+                                        app.logger.debug(f"Resolved placeholder '{value}' to '{actual_id}' for field '{field}'")
+                                   else:
+                                        # 如果在这里找不到，说明依赖的记录处理出错或顺序错误
+                                        raise ValueError(f"Unresolved dependency: Placeholder '{value}' found, but key '{dependency_key}' not found in generated keys. Ensure records are ordered correctly or dependency exists.")
+                         resolved_fields[field] = resolved_value
 
-                        # 仅检查无默认值的 NOT NULL 字段
-                        required_fields = {f for f, v in schema.items() if v["null"] == "NO" and v["key"] != "PRI" and v["default"] is None}
-                        missing = required_fields - set(fields.keys())
-                        if missing:
-                            raise ValueError(f"Missing required fields {missing} for {table_name}")
+                    # 日期和 NOW() 处理
+                    date_types = ["datetime", "timestamp", "date"]
+                    numeric_types = ["int", "tinyint", "bigint", "decimal", "float"]
+                    params = []
+                    columns = []
+                    
+                    # 如果是自增主键且用户未提供，则不加入插入列
+                    if is_auto_increment and primary_key not in resolved_fields:
+                        app.logger.debug(f"Skipping auto-increment primary key '{primary_key}' in insert statement.")
+                        fields_to_insert = {k: v for k, v in resolved_fields.items() if k != primary_key}
+                    else:
+                        fields_to_insert = resolved_fields
+                        # 如果是非自增主键但用户未提供，这里需要处理（例如报错或尝试生成）
+                        # 目前假设非自增主键必须在 resolved_fields 中提供
 
-                        # 自动生成主键值（字符串型）
-                        if primary_key not in fields and "int" not in schema[primary_key]["type"]:
-                            cursor.execute(f"SELECT MAX({primary_key}) FROM {table_name}")
-                            max_id = cursor.fetchone()[f"MAX({primary_key})"]
-                            if max_id:
-                                prefix = ''.join(c for c in max_id if not c.isdigit())
-                                num = int(''.join(c for c in max_id if c.isdigit())) + 1
-                                length = len(max_id) - len(prefix)
-                                fields[primary_key] = f"{prefix}{num:0{length}d}"
-                            else:
-                                fields[primary_key] = "REP000001"
+                    for field, value in fields_to_insert.items():
+                         if field not in schema: continue # Double check schema
 
-                        # 日期和 NOW() 处理
-                        date_types = ["datetime", "timestamp", "date"]
-                        params = []
-                        columns = []
-                        for field, value in fields.items():
-                            field_type = schema[field]["type"]
-                            if any(dt in field_type for dt in date_types) and value:
-                                if isinstance(value, str) and value.lower() == "now()":
-                                    columns.append(field)
-                                    params.append("NOW()")  # 直接使用 MySQL NOW() 函数
-                                else:
-                                    columns.append(field)
-                                    params.append(parse_date(str(value).strip(), field_type))
-                            else:
-                                columns.append(field)
-                                params.append(value)
+                         field_type = schema[field]["type"]
+                         param_value = value # 默认使用解析后的值
 
-                        sql_query = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({', '.join(['%s' if p != 'NOW()' else p for p in params])})"
-                        app.logger.debug(f"Executing SQL: {sql_query} with values: {params}")
-                        cursor.execute(sql_query, [p for p in params if p != "NOW()"])
+                         # 处理日期和 NOW()
+                         if any(dt in field_type for dt in date_types) and param_value:
+                              if isinstance(param_value, str) and param_value.lower() == "now()":
+                                   pass # 特殊处理 NOW()，不在 params 中添加
+                              elif not isinstance(param_value, datetime): # 检查是否已是 datetime 对象
+                                   try:
+                                        param_value = parse_date(str(param_value).strip(), field_type)
+                                   except ValueError as e:
+                                        raise ValueError(f"Invalid date format for field '{field}': {param_value} - {e}")
+                         # 处理数字类型转换 (如果需要)
+                         elif any(nt in field_type for nt in numeric_types) and param_value is not None:
+                              if isinstance(param_value, str):
+                                   try:
+                                        param_value = int(param_value) if "int" in field_type else float(param_value)
+                                   except ValueError:
+                                        raise ValueError(f"Invalid numeric value for field '{field}': {param_value}")
+                              elif not isinstance(param_value, (int, float, Decimal)):
+                                   raise ValueError(f"Invalid numeric type for field '{field}': {type(param_value)}")
+                         
+                         # 添加列和参数 (除了 NOW())
+                         if not (isinstance(param_value, str) and param_value.lower() == "now()"):
+                             columns.append(f"`{field}`") # 使用反引号
+                             params.append(param_value)
+                         else:
+                             # 如果是 NOW(), 只添加列名
+                             columns.append(f"`{field}`")
 
-                        # 记录新插入的主键值
-                        cursor.execute(f"SELECT LAST_INSERT_ID()")
-                        inserted_id = cursor.fetchone()['LAST_INSERT_ID()']
-                        inserted_ids[f"<new_{table_name}_id>"] = inserted_id
+                    # 构建 SQL，特殊处理 NOW()
+                    value_placeholders = []
+                    final_params = []
+                    param_idx = 0
+                    for field_name in columns:
+                         original_value = fields_to_insert.get(field_name.strip('`')) # 获取原始值检查是否是 NOW()
+                         if isinstance(original_value, str) and original_value.lower() == "now()":
+                              value_placeholders.append("NOW()")
+                         else:
+                              value_placeholders.append("%s")
+                              final_params.append(params[param_idx])
+                              param_idx += 1
 
-                        results.append(f"Record inserted into {table_name}: {primary_key}={inserted_id}")
+                    sql_query = f"INSERT INTO `{table_name}` ({', '.join(columns)}) VALUES ({', '.join(value_placeholders)})"
+                    app.logger.debug(f"Executing SQL: {sql_query} with values: {final_params}")
+                    cursor.execute(sql_query, final_params)
 
+                    # --- 获取并记录新插入的主键值 ---
+                    inserted_id = None
+                    if is_auto_increment:
+                         try:
+                              cursor.execute("SELECT LAST_INSERT_ID()")
+                              result = cursor.fetchone()
+                              if result and result['LAST_INSERT_ID()'] is not None and int(result['LAST_INSERT_ID()']) > 0:
+                                   inserted_id = result['LAST_INSERT_ID()']
+                                   app.logger.debug(f"Retrieved LAST_INSERT_ID(): {inserted_id}")
+                              else:
+                                   app.logger.warning("LAST_INSERT_ID() returned 0 or None, check PK definition.")
+                         except Exception as e:
+                              app.logger.warning(f"Failed to execute SELECT LAST_INSERT_ID(): {e}")
+                    else:
+                         # 对于非自增主键，从解析后的字段中获取值
+                         inserted_id = resolved_fields.get(primary_key)
+                         if inserted_id is not None:
+                              app.logger.debug(f"Using provided non-auto-increment PK value: {inserted_id}")
+                         else:
+                              app.logger.warning(f"Could not get PK value from fields for non-auto-increment PK: {primary_key}")
+
+                    # 存储生成的键值，供后续记录引用
+                    if inserted_id is not None:
+                         key_for_lookup = f"{table_name}.{primary_key}"
+                         current_generated_keys[key_for_lookup] = inserted_id
+                         app.logger.debug(f"Stored generated key: {key_for_lookup} = {inserted_id}")
+                         return {"message": f"Record inserted into {table_name}: {primary_key}={inserted_id}", "generated_id": inserted_id}
+                    else:
+                         app.logger.warning(f"Could not determine inserted ID for {table_name}.{primary_key}")
+                         return {"message": f"Record inserted into {table_name}, but failed to retrieve ID."}
+
+                # --- 1. 插入独立记录 ---
+                for record in independent_records:
+                     try:
+                          result = execute_single_insert(record, generated_keys)
+                          results.append(result["message"])
+                     except ValueError as ve:
+                          raise ValueError(f"Error processing independent record {record}: {ve}")
+
+                # --- 2. 插入依赖记录 ---
+                # TODO: 需要考虑依赖的顺序，如果 dependent_records 之间有依赖，这个简单循环可能不够
+                # 简单的拓扑排序或多次迭代可能需要
+                # 目前假设依赖只存在于 independent -> dependent
+                processed_dependent_count = 0
+                max_passes = len(dependent_records) + 1 # 防止无限循环
+                current_pass = 0
+                
+                remaining_dependent = list(dependent_records) # 创建副本以进行迭代修改
+
+                while remaining_dependent and current_pass < max_passes:
+                    current_pass += 1
+                    app.logger.debug(f"--- Processing dependent records pass {current_pass}, remaining: {len(remaining_dependent)} ---")
+                    inserted_in_pass = 0
+                    next_remaining = []
+
+                    for record in remaining_dependent:
+                         try:
+                              # 尝试解析和插入
+                              result = execute_single_insert(record, generated_keys)
+                              results.append(result["message"])
+                              inserted_in_pass += 1
+                         except ValueError as ve:
+                              # 如果是未解决的依赖错误，则保留到下一轮
+                              if "Unresolved dependency" in str(ve):
+                                   app.logger.debug(f"Deferring record due to unresolved dependency: {record}")
+                                   next_remaining.append(record)
+                              else:
+                                   # 如果是其他错误（如日期格式），则直接抛出
+                                   raise ValueError(f"Error processing dependent record {record}: {ve}")
+                    
+                    remaining_dependent = next_remaining # 更新剩余列表
+                    
+                    # 如果这一轮没有成功插入任何记录，并且还有剩余，说明存在循环依赖或无法解决的依赖
+                    if inserted_in_pass == 0 and remaining_dependent:
+                         raise ValueError(f"Could not resolve dependencies for remaining records after {current_pass} passes: {remaining_dependent}")
+                
+                # 检查最终是否所有依赖记录都被处理
+                if remaining_dependent:
+                     raise ValueError(f"Failed to insert all dependent records. Unresolved: {remaining_dependent}")
+
+
+                # --- 提交事务 ---
                 connection.commit()
-                app.logger.debug(f"Inserted records: {results}")
+                app.logger.debug(f"Transaction committed. Final generated keys: {generated_keys}")
+                # 返回成功信息
+                # 注意：这里的 inserted_records 可能不准确，因为它基于原始输入
+                # 返回 generated_keys 可能更有用
                 return jsonify({
                     "message": "\n".join(results),
-                    "inserted_records": [record["fields"] for record in records]
+                    "generated_keys": generated_keys 
+                    # "inserted_records": [r.get("fields") for r in records if isinstance(r, dict)] # 旧逻辑，可能不准确
                 })
 
+        except ValueError as ve: # 捕获处理过程中的 ValueError
+             connection.rollback()
+             app.logger.error(f"Data validation or processing error: {str(ve)}")
+             return jsonify({"error": f"Data Error: {str(ve)}"}), 400 # 返回 400 Bad Request
         except Exception as e:
             connection.rollback()
             app.logger.error(f"Error inserting records: {str(e)}")
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": f"Internal Server Error: {str(e)}"}), 500
 
 
 @app.route('/get_schema', methods=['GET'])

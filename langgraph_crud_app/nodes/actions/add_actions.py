@@ -58,7 +58,7 @@ def process_add_llm_output_action(state: GraphState) -> Dict[str, Any]:
         structured_records = data_processor.clean_and_structure_llm_add_output(raw_output)
         if structured_records is None:
              raise ValueError("清理和结构化 LLM 输出返回 None。")
-        
+
         # 将结构化记录序列化为 JSON 字符串
         try:
             records_json_str = json.dumps(structured_records, ensure_ascii=False)
@@ -98,7 +98,7 @@ def process_placeholders_action(state: GraphState) -> Dict[str, Any]:
     if state.get("add_parse_error") or state.get("add_error_message"):
         print("--- 跳过处理占位符，因为前序步骤出错 ---")
         return {}
-    
+
     # 读取 JSON 字符串状态
     records_json_str = state.get("add_structured_records_str")
     
@@ -174,7 +174,7 @@ def format_add_preview_action(state: GraphState) -> Dict[str, Any]:
     # 从 _str 字段读取状态
     processed_records_json_str = state.get("add_processed_records_str")
     # processed_records = state.get("add_processed_records") # 不再直接读取
-    
+
     processed_records = None # 初始化
     if processed_records_json_str:
         try:
@@ -204,7 +204,7 @@ def format_add_preview_action(state: GraphState) -> Dict[str, Any]:
     if not schema_str:
          print("--- 无法生成预览：数据库 Schema 信息丢失。 ---")
          return {"add_error_message": "数据库 Schema 信息丢失，无法生成预览。"}
-    
+
     # 从处理后的记录中提取涉及的表名
     involved_tables = list(set(record.get("table_name", "unknown") for record in processed_records))
 
