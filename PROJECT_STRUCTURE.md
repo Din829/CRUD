@@ -2,18 +2,18 @@ langgraph_crud_app/
 ├── graph/                  # 核心 LangGraph 图定义
 │   ├── __init__.py
 │   ├── state.py            # 定义 GraphState TypedDict (应用状态结构)
-│   │   └── class GraphState(TypedDict): # 包含所有可能的字段
+│   │   └── class GraphState(TypedDict): # 包含所有可能的字段 (增加 combined_operation_plan, content_combined)
 │   └── graph_builder.py    # 构建 LangGraph 图
 │       ├── _route_after_validation(...)      # 内部路由: 验证修改后
 │       ├── _route_after_context_sql_generation(...) # 内部路由: 上下文SQL生成后
 │       ├── _route_after_context_sql_execution(...) # 内部路由: 上下文SQL执行后
 │       ├── _route_add_flow_on_error(...)     # 内部路由: 新增流程错误检查
-│       └── build_graph()                   # 主函数: 创建并配置图
+│       └── build_graph()                   # 主函数: 创建并配置图 (增加复合流程节点和边)
 │
 ├── nodes/                  # LangGraph 节点 (动作和路由)
 │   ├── __init__.py
 │   ├── actions/            # 存放动作节点 (执行具体任务)
-│   │   ├── __init__.py     # 导出所有动作函数
+│   │   ├── __init__.py     # 导出所有动作函数 (包括 composite_actions)
 │   │   ├── preprocessing_actions.py # 初始化流程动作
 │   │   │   ├── fetch_schema_action(...)        # 调用 API 获取 Schema
 │   │   │   ├── extract_table_names_action(...) # LLM 提取表名
@@ -46,7 +46,11 @@ langgraph_crud_app/
 │   │   │   ├── provide_add_feedback_action(...)  # 提供新增预览反馈给用户
 │   │   │   ├── handle_add_error_action(...)      # 处理新增流程错误 (通用)
 │   │   │   └── finalize_add_response(...)    # 新增：确保反馈被合并的空节点
-│   │   └── flow_control_actions.py # 主流程控制及确认流程动作
+│   │   ├── composite_actions.py # 新增: 复合操作动作
+│   │   │   ├── parse_combined_request_action(...) # LLM 解析复合请求为操作列表
+│   │   │   ├── process_composite_placeholders_action(...) # 新增: 处理 db/random 占位符
+│   │   │   └── format_combined_preview_action(...)  # LLM 格式化复合操作预览
+│   │   └── flow_control_actions.py # 主流程控制及确认流程动作 (更新以处理复合路径)
 │   │       ├── handle_reset_action(...)          # 处理重置意图
 │   │       ├── handle_modify_intent_action(...)  # (占位符)
 │   │       ├── handle_add_intent_action(...)     # (占位符)
@@ -54,12 +58,13 @@ langgraph_crud_app/
 │   │       ├── handle_confirm_other_action(...)# (占位符)
 │   │       ├── stage_modify_action(...)          # 暂存修改操作并请求确认
 │   │       ├── stage_add_action(...)             # 暂存新增操作并请求确认
+│   │       ├── stage_combined_action(...)        # 新增: 暂存复合操作并请求确认
 │   │       ├── handle_nothing_to_stage_action(...) # 处理无法暂存的情况
 │   │       ├── handle_invalid_save_state_action(...) # 处理无效保存状态
 │   │       ├── cancel_save_action(...)           # 用户取消保存
-│   │       ├── execute_operation_action(...)     # 执行暂存的操作 (修改/新增)
-│   │       ├── reset_after_operation_action(...) # 操作后清空相关状态
-│   │       └── format_operation_response_action(...)# LLM 格式化操作结果
+│   │       ├── execute_operation_action(...)     # 执行暂存的操作 (修改/新增/复合)
+│   │       ├── reset_after_operation_action(...) # 操作后清空相关状态 (包括复合)
+│   │       └── format_operation_response_action(...)# LLM 格式化操作结果 (包括复合)
 │   │
 │   └── routers/            # 存放路由节点 (决策流程走向)
 │       ├── __init__.py     # 导出所有路由节点和逻辑
@@ -68,21 +73,21 @@ langgraph_crud_app/
 │       │   └── route_initialization_node(...)    # 图入口节点，检查状态并重置错误
 │       ├── main_router.py          # 主意图路由
 │       │   ├── classify_main_intent_node(...)  # 路由节点: LLM 分类主意图
-│       │   └── _route_after_main_intent(...)   # 路由逻辑: 根据主意图分发
+│       │   └── _route_after_main_intent(...)   # 路由逻辑: 根据主意图分发 (增加 composite)
 │       ├── query_analysis_router.py # 查询/分析子意图及结果路由
 │       │   ├── classify_query_analysis_node(...) # 路由节点: LLM 子意图分类 (查询/分析)
 │       │   ├── _route_query_or_analysis(...)     # 路由逻辑: 分发到查询或分析分支
 │       │   ├── route_after_query_execution_node(...) # 路由节点: SQL 执行后连接点
 │       │   └── _route_after_query_execution(...) # 路由逻辑: 根据 SQL 结果路由
-│       └── confirmation_router.py  # 确认流程路由
+│       └── confirmation_router.py  # 确认流程路由 (更新以处理复合路径)
 │           ├── route_confirmation_entry(...)     # 路由节点: 确认流程入口 (空)
 │           ├── stage_operation_node(...)       # 路由节点: 尝试暂存操作入口 (空)
 │           ├── check_staged_operation_node(...)# 路由节点: 检查已暂存操作入口 (空)
-│           ├── ask_confirm_modify_node(...)    # 路由节点: 询问是否确认修改/新增入口 (空)
+│           ├── ask_confirm_modify_node(...)    # 路由节点: 询问是否确认修改/新增/复合入口 (空)
 │           ├── _route_confirmation_entry_logic(...) # 路由逻辑: 确认入口决策
-│           ├── _stage_operation_logic(...)       # 路由逻辑: 判断暂存类型
-│           ├── _check_staged_operation_logic(...) # 路由逻辑: 检查暂存状态
-│           └── _ask_confirm_modify_logic(...)    # 路由逻辑: LLM 判断用户是否确认 (Yes/No)
+│           ├── _stage_operation_logic(...)       # 路由逻辑: 判断暂存类型 (增加 composite)
+│           ├── _check_staged_operation_logic(...) # 路由逻辑: 检查暂存状态 (增加 combined_operation_plan)
+│           └── _ask_confirm_modify_logic(...)    # 路由逻辑: LLM 判断用户是否确认 (通用)
 │
 ├── services/               # 可重用的业务逻辑和与外部系统的交互层
 │   ├── __init__.py
@@ -91,14 +96,15 @@ langgraph_crud_app/
 │   │   ├── execute_query(...)            # 执行 SELECT SQL 查询
 │   │   ├── update_record(...)            # 更新记录
 │   │   ├── insert_record(...)            # 插入新记录
-│   │   └── delete_record(...)            # 删除记录
+│   │   ├── delete_record(...)            # 删除记录
+│   │   └── execute_batch_operations(...) # 新增: 执行批量操作
 │   ├── data_processor.py   # 包含数据清理、转换、占位符处理等通用工具函数
 │   │   ├── nl_string_to_list(...)        # 换行符分隔字符串转列表
 │   │   ├── clean_sql_string(...)         # 清理 SQL 字符串
 │   │   ├── is_query_result_empty(...)    # 检查查询结果是否为空
 │   │   ├── clean_and_structure_llm_add_output(...) # 清理/结构化新增LLM输出
 │   │   ├── extract_placeholders(...)     # 从结构化记录提取占位符
-│   │   └── process_placeholders(...)     # 处理 {{...}} 占位符 (db/random)
+│   │   └── process_placeholders(...)     # 处理 {{...}} 占位符 (db/random, 忽略 new)
 │   └── llm/                # LLM 相关服务封装
 │       ├── __init__.py
 │       ├── llm_preprocessing_service.py # 初始化流程 LLM 服务
@@ -119,6 +125,9 @@ langgraph_crud_app/
 │       ├── llm_add_service.py        # 新增流程 LLM 服务
 │       │   ├── parse_add_request(...)        # LLM 解析新增请求 (含占位符)
 │       │   └── format_add_preview(...)       # LLM 格式化新增预览
+│       ├── llm_composite_service.py # 新增: 复合操作 LLM 服务
+│       │   ├── parse_combined_request(...)     # LLM 解析复合请求为操作列表
+│       │   └── format_combined_preview(...)    # LLM 格式化复合操作预览
 │       └── llm_flow_control_service.py # 主流程/确认流程 LLM 服务
 │           ├── classify_yes_no(...)          # LLM 判断用户是否确认 (是/否)
 │           └── format_api_result(...)      # LLM 格式化 API 操作结果
@@ -127,12 +136,14 @@ langgraph_crud_app/
 │   ├── __init__.py
 │   └── settings.py         # API Keys, LLM 配置等 (通过 pydantic-settings 加载 .env)
 │
+├── app.py                  # Flask 后端 API (新增 /execute_batch_operations)
 ├── main.py                 # 应用主入口
 │   └── main()              # 加载配置, 构建图, 运行交互循环
 ├── requirements.txt        # Python 依赖库
 ├── README.md               # 项目说明
 ├── PROJECT_STRUCTURE.md    # 项目结构说明 (本文档)
+├── 复合流程说明.txt        # 新增: 复合流程实现进度
 └── .cursor/                # Cursor IDE 配置 (可选)
 
 # --- 外部文件 (辅助理解 Dify 逻辑) ---
-# ... (省略 Dify 相关文件列表) 
+# ... (省略 Dify 相关文件列表)

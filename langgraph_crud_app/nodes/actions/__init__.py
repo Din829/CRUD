@@ -29,6 +29,7 @@ from .flow_control_actions import (
     handle_reset_action,
     stage_modify_action,
     stage_add_action,
+    stage_combined_action,
     handle_nothing_to_stage_action,
     handle_invalid_save_state_action,
     cancel_save_action,
@@ -46,6 +47,10 @@ from .add_actions import (
     format_add_preview_action,
     provide_add_feedback_action,
     handle_add_error_action,
+)
+from .composite_actions import (
+    parse_combined_request_action,
+    format_combined_preview_action
 )
 
 
@@ -85,6 +90,7 @@ __all__ = [
     "handle_reset_action",
     "stage_modify_action",
     "stage_add_action",
+    "stage_combined_action",
     "handle_nothing_to_stage_action",
     "handle_invalid_save_state_action",
     "cancel_save_action",
@@ -93,4 +99,7 @@ __all__ = [
     "format_operation_response_action",
     "handle_add_intent_action",
     "handle_delete_intent_action",
+    # Composite Actions
+    "parse_combined_request_action",
+    "format_combined_preview_action"
 ] 

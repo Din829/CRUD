@@ -37,6 +37,7 @@ from langgraph_crud_app.nodes.actions import (
     handle_reset_action,
     stage_modify_action,
     stage_add_action,
+    stage_combined_action,
     handle_nothing_to_stage_action,
     handle_invalid_save_state_action,
     cancel_save_action,
@@ -45,6 +46,9 @@ from langgraph_crud_app.nodes.actions import (
     format_operation_response_action,
     handle_add_intent_action,
     handle_delete_intent_action,
+    # Composite
+    parse_combined_request_action,
+    format_combined_preview_action
 )
 # 单独导入 add_actions 中的函数
 from langgraph_crud_app.nodes.actions.add_actions import (
@@ -55,6 +59,13 @@ from langgraph_crud_app.nodes.actions.add_actions import (
     provide_add_feedback_action,
     handle_add_error_action,
     finalize_add_response,
+)
+
+# 新增：从 composite_actions 导入
+from langgraph_crud_app.nodes.actions.composite_actions import (
+    parse_combined_request_action,
+    format_combined_preview_action,
+    process_composite_placeholders_action
 )
 
 # --- 内部路由逻辑函数 ---
@@ -177,6 +188,14 @@ def build_graph() -> StateGraph:
     # 新增：添加 finalize_add_response 节点
     graph.add_node("finalize_add_response", finalize_add_response)
 
+    # 新增：复合操作节点
+    graph.add_node("parse_combined_request", parse_combined_request_action)
+    graph.add_node("format_combined_preview", format_combined_preview_action)
+    graph.add_node("stage_combined_action", stage_combined_action) # 添加复合暂存节点注册
+
+    # 新增：复合占位符处理节点
+    graph.add_node("process_composite_placeholders", process_composite_placeholders_action)
+
     # --- 设置入口点 ---
     graph.set_entry_point("route_initialization_node")
 
@@ -207,6 +226,7 @@ def build_graph() -> StateGraph:
             "continue_to_query_analysis": "classify_query_analysis_node",
             "continue_to_modify": "generate_modify_context_sql_action",
             "start_add_flow": "parse_add_request",
+            "start_composite_flow": "parse_combined_request",
             "start_delete_flow": END, # 指向删除占位符或未来实现的节点
             "reset_flow": "handle_reset",
             "continue_to_confirmation": "route_confirmation_entry"
@@ -262,6 +282,7 @@ def build_graph() -> StateGraph:
         {
             "stage_modify_action": "stage_modify_action",
             "stage_add_action": "stage_add_action", # 新增路由
+            "stage_combined_action": "stage_combined_action", # 新增：复合暂存路由
             "handle_nothing_to_stage": "handle_nothing_to_stage"
         }
     )
@@ -287,6 +308,10 @@ def build_graph() -> StateGraph:
     # 确认流程动作序列 (使用重命名后的节点)
     graph.add_edge("execute_operation_action", "reset_after_operation_action")
     graph.add_edge("reset_after_operation_action", "format_operation_response_action")
+    # 新增：暂存动作完成后结束当前轮，等待用户确认
+    graph.add_edge("stage_modify_action", END)
+    graph.add_edge("stage_add_action", END)
+    graph.add_edge("stage_combined_action", END)
 
     # 查询/分析 子意图路由
     graph.add_conditional_edges(
@@ -366,11 +391,14 @@ def build_graph() -> StateGraph:
     # 新增流程 - 错误处理后结束
     graph.add_edge("handle_add_error", END)
 
-    # 确认流程路由 (保持不变，但确认 stage_add_action 边存在)
-    # ... (确认流程的边保持不变)
+    # 新增：复合流程边
+    # 解析后 -> 处理占位符 -> 格式化预览 -> 确认入口
+    graph.add_edge("parse_combined_request", "process_composite_placeholders")
+    graph.add_edge("process_composite_placeholders", "format_combined_preview")
+    graph.add_edge("format_combined_preview", "route_confirmation_entry")
 
-    # 查询/分析流程边 (保持不变)
-    # ... (查询/分析流程的边保持不变)
+    # 确认流程动作序列 (使用重命名后的节点)
+    graph.add_edge("execute_operation_action", "reset_after_operation_action")
 
     # 通用结束和重置边
     graph.add_edge("handle_init_error", END)

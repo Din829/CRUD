@@ -688,5 +688,383 @@ def parse_date(date_str, field_type):
     except Exception as e:
         raise ValueError(f"Invalid date format: {str(e)}")
 
+# === 新增：批量操作 API 端点 ===
+
+@app.route('/execute_batch_operations', methods=['POST'])
+def execute_batch_operations():
+    """
+    执行一个包含多个数据库操作（insert, update, delete）的列表。
+    支持操作间的依赖关系。所有操作在一个事务中执行。
+    """
+    raw_data = request.get_data(as_text=True)
+    app.logger.debug(f"Raw request data for batch operations: {raw_data}")
+
+    try:
+        operations = json.loads(raw_data) if raw_data else request.get_json()
+        if not isinstance(operations, list):
+            return jsonify({"error": "Request body must be a JSON list of operations"}), 400
+    except json.JSONDecodeError as e:
+        app.logger.error(f"JSON decode error for batch operations: {str(e)}")
+        return jsonify({"error": f"Invalid JSON format: {str(e)}"}), 400
+
+    if not operations:
+         return jsonify({"message": "Received empty operations list, nothing to execute.", "results": []}), 200
+
+    # 用于存储先前操作返回的结果，供后续依赖使用 (索引 -> 结果字典)
+    operation_results_cache = {} 
+    # 存储每个操作的执行结果
+    batch_results = [] 
+    # === 新增：初始化 Schema 缓存字典 ===
+    schema_cache = {}
+
+    with get_db_connection() as connection:
+        try:
+            connection.begin() # 开始事务
+            with connection.cursor() as cursor:
+                for index, op in enumerate(operations):
+                    app.logger.info(f"Processing operation {index}: {op}")
+                    operation_type = op.get("operation", "").lower()
+                    table_name = op.get("table_name")
+
+                    if not table_name:
+                        raise ValueError(f"Operation {index}: Missing 'table_name'.")
+
+                    # --- 依赖处理: 替换占位符 ---
+                    # (修改：现在也处理 where_dict 中的占位符)
+                    depends_on_index = op.get("depends_on_index")
+                    if depends_on_index is not None:
+                        if not isinstance(depends_on_index, int) or depends_on_index < 0 or depends_on_index >= index:
+                            raise ValueError(f"Operation {index}: Invalid 'depends_on_index' value: {depends_on_index}.")
+                        
+                        dependent_result = operation_results_cache.get(depends_on_index)
+                        if dependent_result is None:
+                            raise ValueError(f"Operation {index}: Could not find result for dependency index {depends_on_index}.")
+
+                        # --- 函数：递归替换字典/列表中的占位符 ---
+                        def replace_placeholders_recursive(item, dep_result):
+                            if isinstance(item, dict):
+                                return {k: replace_placeholders_recursive(v, dep_result) for k, v in item.items()}
+                            elif isinstance(item, list):
+                                return [replace_placeholders_recursive(elem, dep_result) for elem in item]
+                            elif isinstance(item, str):
+                                match = re.match(r"\{\{previous_result\[(\d+)\]\.(\w+)\}\}", item)
+                                if match:
+                                    dep_idx_str, field_name = match.groups()
+                                    dep_idx = int(dep_idx_str)
+                                    if dep_idx == depends_on_index: # 确保索引匹配
+                                        if field_name in dep_result:
+                                             replaced_value = dep_result[field_name]
+                                             app.logger.info(f"Op {index}: Replaced placeholder '{item}' with value '{replaced_value}' from op {depends_on_index}")
+                                             return replaced_value
+                                        else:
+                                            raise ValueError(f"Op {index}: Placeholder field '{field_name}' not found in result of dependency index {depends_on_index}.")
+                                    else:
+                                        raise ValueError(f"Op {index}: Placeholder index {dep_idx} does not match depends_on_index {depends_on_index}.")
+                                return item # 没有匹配，返回原字符串
+                            else:
+                                return item # 其他类型，直接返回
+                        # --- END 函数定义 ---
+
+                        # 在需要的地方（values, set, where）替换占位符
+                        if operation_type == "insert" and "values" in op:
+                             op["values"] = replace_placeholders_recursive(op["values"], dependent_result)
+                             app.logger.debug(f"Op {index}: Values after potential replacement: {op['values']}")
+                        elif operation_type == "update":
+                             if "set" in op:
+                                 op["set"] = replace_placeholders_recursive(op["set"], dependent_result)
+                                 app.logger.debug(f"Op {index}: Set after potential replacement: {op['set']}")
+                             if "where" in op:
+                                 op["where"] = replace_placeholders_recursive(op["where"], dependent_result)
+                                 app.logger.debug(f"Op {index}: Where after potential replacement: {op['where']}")
+                        elif operation_type == "delete" and "where" in op:
+                             op["where"] = replace_placeholders_recursive(op["where"], dependent_result)
+                             app.logger.debug(f"Op {index}: Where after potential replacement: {op['where']}")
+
+                    # --- 根据操作类型构建和执行 SQL ---
+                    current_op_result_data = {} # 用于存储此操作需要返回的数据
+                    affected_rows = 0
+
+                    # --- 预先获取当前操作表的 Schema --- 
+                    table_schema = schema_cache.get(table_name)
+                    if not table_schema:
+                        # 尝试从数据库加载（理论上应该在入口处已缓存，作为后备）
+                        try:
+                             cursor.execute(f"DESCRIBE `{table_name}`")
+                             table_schema = {row["Field"]: {
+                                 "type": row["Type"].lower(), "null": row["Null"],
+                                 "key": row["Key"], "default": row["Default"],
+                                 "extra": row.get("Extra", "")
+                             } for row in cursor.fetchall()}
+                             schema_cache[table_name] = table_schema # 存入缓存
+                        except Exception as schema_e:
+                             raise ValueError(f"Operation {index}: Failed to get schema for table '{table_name}': {schema_e}")
+
+                    # --- 函数：准备参数值（类型转换等） ---
+                    def prepare_param_value(column_name, value, current_cursor):
+                        # --- 原有的类型转换逻辑 (占位符已在 LangGraph 层处理) ---
+                        if column_name not in table_schema:
+                            app.logger.warning(f"Op {index}: Column '{column_name}' not found in schema for table '{table_name}', skipping type conversion.")
+                            return value # 如果列不在 schema 中，返回当前值
+
+                        col_info = table_schema[column_name]
+                        col_type = col_info["type"].lower()
+                        date_types = ["datetime", "timestamp", "date"]
+                        numeric_types = ["int", "tinyint", "bigint", "decimal", "float"]
+
+                        # 1. 处理日期时间类型
+                        if any(dt in col_type for dt in date_types):
+                            if isinstance(value, str) and value:
+                                try:
+                                    parsed_dt = parse_date(value.strip(), col_type)
+                                    app.logger.debug(f"Op {index}: Parsed date for column '{column_name}': '{value}' -> '{parsed_dt}' (type: {type(parsed_dt)})" )
+                                    return parsed_dt
+                                except ValueError as date_e:
+                                    raise ValueError(f"Op {index}: Invalid date format for column '{column_name}': '{value}' - {date_e}")
+                            elif isinstance(value, datetime):
+                                return value
+                            elif value is None and col_info.get('null') == 'YES':
+                                return None
+                            else:
+                                raise ValueError(f"Op {index}: Invalid type or null value for date column '{column_name}': {type(value)}")
+
+                        # 2. 处理数字类型
+                        elif any(nt in col_type for nt in numeric_types):
+                            if isinstance(value, str) and value:
+                                 try:
+                                      if "int" in col_type or "bigint" in col_type or "tinyint" in col_type:
+                                           return int(value)
+                                      else: # float, decimal
+                                           return float(value)
+                                 except ValueError:
+                                      raise ValueError(f"Op {index}: Invalid numeric value for column '{column_name}' after processing: '{value}'")
+                            elif isinstance(value, (int, float, Decimal)):
+                                return value
+                            elif value is None and col_info.get('null') == 'YES':
+                                return None
+                            else:
+                                raise ValueError(f"Op {index}: Invalid type or null value for numeric column '{column_name}': {type(value)}")
+
+                        # 3. 其他情况返回当前值
+                        return value
+                    # --- END 函数定义 ---
+
+                    if operation_type == "insert":
+                        values_dict = op.get("values")
+                        if not isinstance(values_dict, dict):
+                            raise ValueError(f"Operation {index} (insert): 'values' must be a dictionary.")
+                        
+                        columns = []
+                        value_placeholders = []
+                        params = []
+                        for col, val in values_dict.items():
+                             columns.append(f"`{col}`") 
+                             if isinstance(val, str) and val.lower() == "now()":
+                                 value_placeholders.append("NOW()")
+                             else:
+                                 value_placeholders.append("%s")
+                                 # 在添加参数前进行准备/转换
+                                 prepared_val = prepare_param_value(col, val, cursor)
+                                 params.append(prepared_val)
+                        
+                        cols_str = ", ".join(columns)
+                        vals_str = ", ".join(value_placeholders)
+                        sql = f"INSERT INTO `{table_name}` ({cols_str}) VALUES ({vals_str})"
+                        app.logger.debug(f"Op {index}: Executing SQL: {sql} with params: {params}")
+                        cursor.execute(sql, params)
+                        affected_rows = cursor.rowcount
+                        last_insert_id = cursor.lastrowid
+
+                        # 处理 return_affected (仅限 INSERT)
+                        return_fields = op.get("return_affected")
+                        if last_insert_id and isinstance(return_fields, list) and return_fields:
+                            # 需要获取刚插入记录的主键名 (这里假设它是 'id'，实际应从 Schema 获取)
+                            # TODO: 获取主键名，而不是硬编码 'id'
+                            pk_name = "id" 
+                            query_cols_str = ", ".join([f"`{f}`" for f in return_fields])
+                            fetch_sql = f"SELECT {query_cols_str} FROM `{table_name}` WHERE `{pk_name}` = %s"
+                            cursor.execute(fetch_sql, [last_insert_id])
+                            fetched_result = cursor.fetchone()
+                            if fetched_result:
+                                current_op_result_data = fetched_result
+                                app.logger.info(f"Op {index}: Fetched affected fields: {current_op_result_data}")
+                            else:
+                                app.logger.warning(f"Op {index}: Could not fetch affected fields for inserted ID {last_insert_id}")
+
+                    elif operation_type == "update":
+                        where_dict = op.get("where")
+                        set_dict = op.get("set")
+                        if not isinstance(where_dict, dict) or not where_dict:
+                            raise ValueError(f"Operation {index} (update): 'where' clause dictionary cannot be empty.")
+                        if not isinstance(set_dict, dict) or not set_dict:
+                            raise ValueError(f"Operation {index} (update): 'set' clause dictionary cannot be empty.")
+
+                        set_parts = []
+                        params = [] 
+                        
+                        # --- 修改 SET 子句处理逻辑 (对齐其他端点) --- 
+                        for col, val in set_dict.items():
+                            # 1. 显式检查 NOW()
+                            if isinstance(val, str) and val.lower() == "now()":
+                                set_parts.append(f"`{col}` = NOW()")
+                            # 2. 其他所有值都参数化处理
+                            else:
+                                set_parts.append(f"`{col}` = %s")
+                                prepared_val = prepare_param_value(col, val, cursor) # 复用之前的类型准备函数
+                                params.append(prepared_val)
+                        # --- END 修改 SET 子句处理逻辑 ---
+                        
+                        where_parts = []
+                        # WHERE 子句处理逻辑
+                        for col, condition in where_dict.items():
+                            if isinstance(condition, dict):
+                                # 处理字典形式的条件，如 {"like": ...}, {"in": ...}
+                                op_key = next(iter(condition)).lower()
+                                op_val = condition[op_key]
+                                if op_key == 'like':
+                                    where_parts.append(f"`{col}` LIKE %s")
+                                    params.append(op_val) # LIKE 的值是字符串，直接添加参数
+                                elif op_key == 'in':
+                                    # 检查 op_val 是否是列表/元组或子查询字符串
+                                    if isinstance(op_val, (list, tuple)):
+                                        if not op_val: # IN 一个空列表会报错
+                                             raise ValueError(f"Operation {index}: 'IN' operator value for column '{col}' cannot be an empty list/tuple.")
+                                        # 构建占位符字符串，例如 "(%s, %s, %s)"
+                                        placeholders = ", ".join(["%s"] * len(op_val))
+                                        where_parts.append(f"`{col}` IN ({placeholders})")
+                                        params.extend(op_val) # 将列表中的所有值添加到参数
+                                    elif isinstance(op_val, str) and op_val.strip().startswith("(") and op_val.strip().endswith(")"):
+                                        # === START FIX for MySQL 1093 Error ===
+                                        subquery = op_val.strip()
+                                        # 简单的检查，看子查询是否包含 "FROM `table_name`" 或 "FROM table_name"
+                                        # 注意：这可能不够鲁棒，例如表名出现在注释或字符串字面量中。更严格的解析会更好，但这里先用简单方法。
+                                        # 我们需要检查 `table_name` 被反引号包围和不被包围两种情况
+                                        target_table_pattern_1 = f"FROM `{table_name}`"
+                                        target_table_pattern_2 = f"FROM {table_name}" # 可能没有反引号
+                                        # 使用小写比较来增加匹配机会
+                                        if target_table_pattern_1.lower() in subquery.lower() or target_table_pattern_2.lower() in subquery.lower():
+                                            app.logger.warning(f"Op {index}: Wrapping subquery for column '{col}' to avoid MySQL 1093 error.")
+                                            # 使用别名确保唯一性，以防一个 WHERE 中有多个此类子查询
+                                            wrapped_subquery = f"(SELECT * FROM {subquery} AS temp_subquery_{col}_{index})" 
+                                            where_parts.append(f"`{col}` IN {wrapped_subquery}")
+                                        else:
+                                            # 子查询不引用目标表，或者我们的检查不够智能，按原样拼接
+                                            app.logger.warning(f"Op {index}: Directly embedding subquery in WHERE clause for column '{col}': {subquery}")
+                                            where_parts.append(f"`{col}` IN {subquery}") # 直接拼接子查询
+                                        # === END FIX for MySQL 1093 Error ===
+                                    else:
+                                        raise ValueError(f"Operation {index}: Unsupported value type for 'IN' operator in WHERE clause for column '{col}': {type(op_val)}. Expected list/tuple or subquery string.")
+                                else:
+                                     raise ValueError(f"Operation {index}: Unsupported dictionary operator '{op_key}' in WHERE clause for column '{col}'.")
+                            else:
+                                # 处理简单的等于条件
+                                where_parts.append(f"`{col}` = %s")
+                                prepared_condition = prepare_param_value(col, condition, cursor)
+                                params.append(prepared_condition)
+
+                        set_clause = ", ".join(set_parts)
+                        where_clause = " AND ".join(where_parts)
+                        sql = f"UPDATE `{table_name}` SET {set_clause} WHERE {where_clause}"
+                        app.logger.debug(f"Op {index}: Executing SQL: {sql} with params: {params}")
+                        cursor.execute(sql, params)
+                        affected_rows = cursor.rowcount
+                        
+                        # --- 新增：处理 UPDATE 的 return_affected --- 
+                        return_fields = op.get("return_affected")
+                        if affected_rows > 0 and isinstance(return_fields, list) and return_fields:
+                            # 重新查询以获取被更新记录的指定字段
+                            # 注意：这假设 WHERE 条件足够精确以定位记录。
+                            # 如果 UPDATE 可能影响多行，这里只获取第一个匹配行的结果。
+                            query_cols_str = ", ".join([f"`{f}`" for f in return_fields])
+                            # 使用与 UPDATE 相同的 WHERE 条件和参数来查询
+                            # 需要从完整的 params 列表中分离出 WHERE 子句对应的参数
+                            where_params = params[len(set_parts):] # 假设 WHERE 参数在 SET 参数之后
+                            fetch_sql = f"SELECT {query_cols_str} FROM `{table_name}` WHERE {where_clause}"
+                            app.logger.debug(f"Op {index}: Fetching affected fields after update. SQL: {fetch_sql} with params: {where_params}")
+                            cursor.execute(fetch_sql, where_params)
+                            fetched_result = cursor.fetchone() # 只获取一行
+                            if fetched_result:
+                                current_op_result_data = fetched_result
+                                app.logger.info(f"Op {index}: Fetched affected fields after update: {current_op_result_data}")
+                            else:
+                                # 可能因为事务隔离级别或其他原因没查到刚更新的行？或者 WHERE 条件有问题？
+                                app.logger.warning(f"Op {index}: Could not fetch affected fields after update using WHERE: {where_clause} with params {where_params}")
+                        # --- END 新增 ---
+
+                    elif operation_type == "delete":
+                        where_dict = op.get("where")
+                        if not isinstance(where_dict, dict) or not where_dict:
+                            raise ValueError(f"Operation {index} (delete): 'where' clause dictionary cannot be empty.")
+                        
+                        where_parts = []
+                        params = []
+                        for col, condition in where_dict.items():
+                            if isinstance(condition, dict):
+                                op_key = next(iter(condition)).lower()
+                                op_val = condition[op_key]
+                                if op_key == 'like':
+                                    where_parts.append(f"`{col}` LIKE %s")
+                                    params.append(op_val)
+                                else:
+                                     raise ValueError(f"Operation {index} (delete): Unsupported operator '{op_key}' in WHERE clause for column '{col}'.")
+                            else:
+                                where_parts.append(f"`{col}` = %s")
+                                # 在添加参数前进行准备/转换
+                                prepared_condition = prepare_param_value(col, condition, cursor)
+                                params.append(prepared_condition)
+                        
+                        where_clause = " AND ".join(where_parts)
+                        sql = f"DELETE FROM `{table_name}` WHERE {where_clause}"
+                        app.logger.debug(f"Op {index}: Executing SQL: {sql} with params: {params}")
+                        cursor.execute(sql, params)
+                        affected_rows = cursor.rowcount
+
+                    else:
+                        raise ValueError(f"Operation {index}: Unsupported operation type '{operation_type}'.")
+
+                    # 记录单步操作结果
+                    step_result = {
+                        "operation_index": index,
+                        "operation_type": operation_type,
+                        "table_name": table_name,
+                        "success": True,
+                        "affected_rows": affected_rows,
+                    }
+                    if operation_type == "insert" and last_insert_id:
+                         step_result["last_insert_id"] = last_insert_id
+                    batch_results.append(step_result)
+
+                    # 如果此操作需要返回结果给后续步骤，存入缓存
+                    if current_op_result_data:
+                        operation_results_cache[index] = current_op_result_data
+
+            connection.commit() # 所有操作成功，提交事务
+            app.logger.info("Batch operations completed successfully and transaction committed.")
+            return jsonify({"message": "Batch operations executed successfully.", "results": batch_results}), 200
+
+        except (ValueError, pymysql.MySQLError, KeyError, IndexError) as e: # 捕获各类可能的错误
+            connection.rollback() # 出错，回滚事务
+            error_msg = f"Error processing batch operation at index {index if 'index' in locals() else 'unknown'}: {str(e)}"
+            app.logger.error(error_msg, exc_info=True) # 记录完整异常信息
+            # 在 batch_results 中标记错误发生的位置
+            if 'index' in locals():
+                 if index < len(batch_results): # 如果错误发生在添加结果之前
+                      pass # batch_results 已经是正确的
+                 else: # 错误发生在执行 SQL 之后，添加结果之前
+                      batch_results.append({
+                           "operation_index": index,
+                           "success": False,
+                           "error": str(e)
+                      })
+            
+            return jsonify({"error": error_msg, "results": batch_results}), 500
+        except Exception as e: # 捕获其他意外错误
+             connection.rollback()
+             error_msg = f"Unexpected error during batch operation: {str(e)}"
+             app.logger.error(error_msg, exc_info=True)
+             return jsonify({"error": error_msg, "results": batch_results}), 500
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5003)
+    # 注意：从环境变量加载配置或使用默认值
+    flask_host = os.environ.get('FLASK_RUN_HOST', '0.0.0.0')
+    flask_port = int(os.environ.get('FLASK_RUN_PORT', 5003))
+    app.run(host=flask_host, port=flask_port, debug=True)

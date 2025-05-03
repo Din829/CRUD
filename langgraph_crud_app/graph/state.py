@@ -15,7 +15,7 @@ class GraphState(TypedDict):
     delete_show: Optional[str] = None     # 面向用户的删除操作预览内容 (查询结果，保存以供确认)
     lastest_content_production: Optional[List[Dict[str, Any]]] = None # 修改类型！存储待提交API的创建/更新负载 (Python列表)
     delete_array: Optional[List[str]] = None    # 删除 API 调用的原始结构化负载 (JSON 字符串列表) (确认前准备)
-    save_content: Optional[str] = None          # 控制标志，指示待处理的保存操作: "修改路径", "新增路径", "删除路径", 或 None (请求用户确认前设置)
+    save_content: Optional[str] = None          # 控制标志，指示待处理的保存操作: "修改路径", "新增路径", "删除路径", "复合路径", 或 None (请求用户确认前设置)
     # id_check: Optional[str]            # Dify 变量，用途不明确，暂时省略，除非需要
 
     # 新增：用于存储 API 调用结果的临时字段
@@ -59,9 +59,13 @@ class GraphState(TypedDict):
     # delete_show: 存储 LLM 格式化的待删除记录预览文本 (给用户看)
     # delete_array: 存储解析后的待删除记录 ID 列表 (给 API)
 
+    # === 新增：复合操作状态 ===
+    combined_operation_plan: Optional[List[Dict[str, Any]]] = None # LLM 解析出的统一操作列表
+    content_combined: Optional[str] = None # 复合操作的统一预览文本
+
     # === 保存/确认流程状态 ===
-    # save_content: 标记当前暂存的操作类型 ("修改路径", "新增路径", "删除路径")
-    # (复用) lastest_content_production: 存储待执行的修改/新增操作负载
+    # save_content: 标记当前暂存的操作类型 ("修改路径", "新增路径", "删除路径", "复合路径")
+    # (复用) lastest_content_production: 存储待执行的修改/新增/复合操作负载
     # (复用) delete_array: 存储待执行的删除操作负载
     # (复用) api_call_result: 存储 API 调用结果 (成功或失败消息)
 

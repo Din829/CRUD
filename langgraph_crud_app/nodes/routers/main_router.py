@@ -42,7 +42,10 @@ def _route_after_main_intent(state: GraphState):
         # 检查 content_new 或 save_content 是否已填充？
         # 暂时直接路由到新增流程开始
         print("Routing to Add flow")
-        return "start_add_flow" 
+        return "start_add_flow"
+    elif intent == "composite": # 新增：处理复合意图
+        print("Routing to Composite flow")
+        return "start_composite_flow"
     elif intent == "delete": # 为 'delete' 意图添加的分支 (占位符)
         print("Routing to Delete flow (placeholder)")
         return "start_delete_flow"

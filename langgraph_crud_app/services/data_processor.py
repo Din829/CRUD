@@ -221,7 +221,7 @@ def process_placeholders(structured_records: List[Dict[str, Any]]) -> List[Dict[
 
     Returns:
         处理完占位符后的结构化记录列表。
-    
+
     Raises:
         ValueError: 如果遇到不支持的占位符类型或执行查询出错。
     """

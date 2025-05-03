@@ -1,0 +1,62 @@
+# 复合流程 (方案三：前端解析，后端执行) 实施进度总结
+
+## 1. LangGraph 框架准备
+
+*   **状态 (`graph/state.py`)**:
+    *   添加了 `combined_operation_plan`: List[Dict[str, Any]] - 存储 LLM 解析的原始操作列表（可能带占位符）。
+    *   添加了 `content_combined`: str - 存储格式化的用户预览文本。
+    *   更新了 `lastest_content_production`: List[Dict[str, Any]] - 现在存储**处理完占位符后**的操作列表，供 API 执行。
+    *   更新了 `save_content` 的注释，加入 `"复合路径"`。
+*   **API 客户端 (`services/api_client.py`)**:
+    *   添加了 `execute_batch_operations(operations: List[Dict[str, Any]])` 函数，用于调用新的后端批量处理接口 `/execute_batch_operations`。
+*   **确认流程 (`nodes/routers/confirmation_router.py`, `nodes/actions/flow_control_actions.py`)**:
+    *   修改了 `_stage_operation_logic`, `_check_staged_operation_logic`, `_ask_confirm_modify_logic` 路由逻辑，以识别 `save_content == "复合路径"` 并处理 `combined_operation_plan` (原始计划) 和 `content_combined` (预览) 状态。**注意**: `_check_staged_operation_logic` 检查的是 `lastest_content_production` (处理后计划) 是否存在。
+    *   添加了 `stage_combined_action` 动作节点，用于将 `combined_operation_plan` (原始计划) 和 `content_combined` (预览) 暂存到状态中，并设置 `save_content`。
+    *   更新了 `execute_operation_action` 动作节点，增加分支：当 `save_content == "复合路径"` 时，调用 `api_client.execute_batch_operations(state['lastest_content_production'])` (使用处理后计划)。
+    *   更新了 `reset_after_operation_action` 和 `format_operation_response_action` 以适配复合路径。
+*   **图构建 (`graph/graph_builder.py`)**:
+    *   添加了新节点: `parse_combined_request`, `process_composite_placeholders`, `format_combined_preview`, `stage_combined_action`。
+    *   更新了主意图路由 `classify_main_intent_node` 的边，添加 `composite` -> `parse_combined_request`。
+    *   添加了边 `parse_combined_request` -> `process_composite_placeholders` -> `format_combined_preview` -> `route_confirmation_entry`。
+    *   更新了确认流程暂存路由 `stage_operation_node` 的边，添加 `"stage_combined_action"` -> `stage_combined_action`。
+    *   添加了边 `stage_combined_action` -> `END`。
+
+## 2. 复合请求解析与占位符处理 (LangGraph 端)
+
+*   **LLM 服务 (`services/llm/llm_composite_service.py`)**:
+    *   创建了新文件。
+    *   定义了 `parse_combined_request(...) -> List[Dict[str, Any]]`: 使用 LLM 将自然语言解析为结构化操作列表，现在包含 `{{db(...)}}` 和 `{{random(...)}}` 占位符。
+    *   定义了 `format_combined_preview(...) -> str`: 使用 LLM 将**原始**操作列表（带占位符）格式化为用户友好的预览文本。
+*   **动作节点 (`nodes/actions/composite_actions.py`)**:
+    *   创建了新文件。
+    *   定义了 `parse_combined_request_action(state) -> Dict`: 调用 LLM 服务，将结果存入 `combined_operation_plan` (原始) 和 `lastest_content_production` (临时，待处理)。
+    *   **新增**: 定义了 `process_composite_placeholders_action(state) -> Dict`:
+        *   读取 `lastest_content_production` (原始计划)。
+        *   调用内部辅助函数 `_process_value` 处理 `{{db(...)}}` (通过 `api_client.execute_query`) 和 `{{random(...)}}` 占位符。
+        *   将处理后的计划更新回 `lastest_content_production`。
+    *   定义了 `format_combined_preview_action(state) -> Dict`: 调用 LLM 服务（使用 `combined_operation_plan`），将预览文本存入 `content_combined`。
+*   **导出更新 (`nodes/actions/__init__.py`, `graph/graph_builder.py`)**: 导出了新的复合动作函数并修复了导入路径。
+
+## 3. 后端 API (`app.py`)
+
+*   **批量执行端点 (`/execute_batch_operations`)**:
+    *   创建了 API 端点。
+    *   **事务处理**: 使用事务保证原子性。
+    *   **占位符处理**: **仅处理** `{{previous_result[index].field_name}}` 依赖占位符。`{{db(...)}}` 和 `{{random(...)}}` 已在 LangGraph 层处理。
+    *   **操作支持**: 实现了 `insert`, `update`, `delete` 的 SQL 构建和执行。
+    *   **依赖处理**:
+        *   读取 `depends_on_index`。
+        *   实现了 `replace_placeholders_recursive` 处理 `{{previous_result[...]}}`。
+    *   **结果返回 (`return_affected`)**:
+        *   支持在 `insert` 和 `update` 中指定 `return_affected`。
+        *   在操作成功后查询并缓存指定字段的值，供后续依赖引用。
+*   **错误修复与健壮性**: (保持之前的修复记录)
+    *   修复了 MySQL 1093 错误。
+    *   修复了 `/get_schema` 返回格式。
+    *   为 `/get_schema` 添加了日志和错误处理。
+    *   **移除了** `prepare_param_value` 中处理 `{{db(...)}}` 的冗余逻辑。
+
+## 4. 当前状态
+
+*   后端和 LangGraph 端的复合流程逻辑已完成并测试成功。
+*   现在能够处理包含隐式查找（如按用户名查找 ID）、随机值生成和操作间依赖的复杂自然语言请求。

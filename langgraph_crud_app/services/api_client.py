@@ -172,4 +172,40 @@ def delete_record(table_name: str, primary_key: str, primary_value: Any) -> Dict
         raise
     except json.JSONDecodeError as e:
         print(f"解码 delete_record 的 JSON 响应时出错: {e}")
+        raise ValueError(f"来自 {api_url} 的无效 JSON 响应")
+
+# === 新增：批量操作 API 调用 ===
+def execute_batch_operations(operations: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    调用 Flask API 端点以原子方式执行一批数据库操作（更新、插入等）。
+    对应方案三中的新后端端点。
+
+    参数:
+        operations: 一个操作字典的列表，每个字典描述一个操作。
+                    格式待定，但应包含操作类型、表、数据、依赖等信息。
+                    例如: 
+                    [
+                      {"operation": "update", "table_name": "t1", ...},
+                      {"operation": "insert", "table_name": "t2", ...}
+                    ]
+
+    返回:
+        一个字典，代表整个批处理操作的结果（成功或失败信息）。
+    抛出:
+        requests.exceptions.RequestException: 如果 API 请求失败。
+        ValueError: 如果响应不是有效的 JSON。
+    """
+    api_url = f"{BASE_API_URL}/execute_batch_operations" # 新的端点 URL
+    try:
+        print(f"调试: 发送批量操作负载: {json.dumps(operations, ensure_ascii=False)}")
+        # 注意：超时时间可能需要根据操作复杂性调整
+        response = requests.post(api_url, headers=HEADERS, json=operations, timeout=TIMEOUT * 3) # 稍微延长超时
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"调用 execute_batch_operations API 时出错: {e}")
+        # 可以根据 e.response 进一步判断错误原因
+        raise
+    except json.JSONDecodeError as e:
+        print(f"解码 execute_batch_operations 的 JSON 响应时出错: {e}")
         raise ValueError(f"来自 {api_url} 的无效 JSON 响应") 

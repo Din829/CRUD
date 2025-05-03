@@ -24,6 +24,7 @@ def classify_main_intent(query: str) -> str:
     """
     使用 LLM 对用户查询进行主意图分类。
     对应 Dify 节点: '1742268516158' (问题分类器)
+    修改：增加了对复合操作意图的识别。
     Args:
         query: 用户输入的查询字符串。
     Returns:
@@ -36,36 +37,52 @@ def classify_main_intent(query: str) -> str:
 类别定义:
 1.  **查询/分析 (query_analysis)**: 检索记录或分析数据，含关键词：查询、搜索、查找、查、详情、状态、分析、统计、多少、总数等。示例："查询 TKT-2307-0001 状态""统计工单数量"
 2.  **修改 (modify)**: 更改记录，含关键词：修改、更改、变更、更新。示例："修改 TKT-2307-0001 状态为已解决"
-3.  **确认/其他 (confirm_other)**: 含关键词：保存、确认、是、好、确定，或无法归类。示例："保存""是""继续"
-4.  **重置 (reset)**: 重置或清空，含关键词：重置、重新开始、清空。示例："重置所有数据"
-5.  **新增 (add)**: 添加新记录，含关键词：添加、新增、创建（无统计/分析词）。示例："新增一条工单"
-6.  **删除 (delete)**: 删除记录，含关键词：删除、移除、取消。示例："删除 TKT-2307-0001"
+3.  **新增 (add)**: 添加新记录，含关键词：添加、新增、创建（无统计/分析词）。示例："新增一条工单"
+4.  **删除 (delete)**: 删除记录，含关键词：删除、移除、取消。示例："删除 TKT-2307-0001"
+5.  **复合操作 (composite)**: 涉及多种不同类型的操作（修改、新增、删除的组合），或包含多个同类型但针对不同目标的独立操作。通常包含连接词如"并且"、"然后"、"同时"。示例："将用户 A 的邮箱修改为 X，并为用户 B 新增地址 Y"，"新增订单 X，然后添加订单项 Y 和 Z"。
+6.  **确认/其他 (confirm_other)**: 含关键词：保存、确认、是、好、确定，或无法归类到以上任何一种。示例："保存""是""继续"
+7.  **重置 (reset)**: 重置或清空，含关键词：重置、重新开始、清空。示例："重置所有数据"
 
 规则:
-- 多特征冲突（如"新增并统计"），优先"查询/分析 (query_analysis)"。
-- "新增"若涉统计/分析，归"查询/分析 (query_analysis)"。
-- 无法判断，默认"确认/其他 (confirm_other)"。
+- 如果查询同时符合"查询/分析"和其他操作类别（如"新增并统计"），优先归类为 **查询/分析 (query_analysis)**。
+- 如果查询涉及多种操作类型（修改、新增、删除中的两种或以上），归类为 **复合操作 (composite)**。
+- 如果仅包含"修改"、"新增"或"删除"中的一种，即使有多个步骤针对不同目标（"新增A，然后新增B"），也优先归类为单一意图（例如 `add`）。(注：此规则可调整，但当前优先简单意图判断，让复合处理更复杂的跨类型操作)
+- 无法清晰判断，或仅包含确认/重置词语，按对应类别处理，最终默认为 **确认/其他 (confirm_other)**。
 
 输出要求：
-仅输出分类结果对应的英文标签，例如：query_analysis, modify, confirm_other, reset, add, delete。不要任何其他文字。"""),
+仅输出分类结果对应的英文标签，例如：query_analysis, modify, add, delete, composite, confirm_other, reset。不要任何其他文字。"""),
         ("user", "用户输入: {query}")
     ])
     chain = prompt_template | llm_gpt4_1 | StrOutputParser()
     try:
         result = chain.invoke({"query": query}).strip().lower()
-        valid_intents = ["query_analysis", "modify", "confirm_other", "reset", "add", "delete"]
+        valid_intents = ["query_analysis", "modify", "add", "delete", "composite", "confirm_other", "reset"] # 更新有效意图列表
         cleaned_result = re.sub(r'[^\w_]', '', result)
         if cleaned_result in valid_intents:
             print(f"LLM 分类结果 (主意图): {cleaned_result}")
             return cleaned_result
         else:
             print(f"警告: LLM 主意图分类输出不规范: '{result}'. 回退到默认。")
-            if "query" in result or "分析" in result or "查" in result: return "query_analysis"
-            if "修改" in result or "更改" in result: return "modify"
-            if "新增" in result or "添加" in result: return "add"
-            if "删除" in result or "移除" in result: return "delete"
+            # 简单回退逻辑，优先匹配特定词
+            if "查询" in result or "分析" in result or "查" in result or "统计" in result: return "query_analysis"
             if "重置" in result or "清空" in result: return "reset"
-            return "confirm_other"
+            # 检查复合关键词 (如果存在多种操作类型关键词则更有可能是复合)
+            modify_kw = any(kw in result for kw in ["修改", "更改"])
+            add_kw = any(kw in result for kw in ["新增", "添加"])
+            delete_kw = any(kw in result for kw in ["删除", "移除"])
+            if sum([modify_kw, add_kw, delete_kw]) > 1: # 如果包含多种操作关键词
+                 return "composite"
+            if any(conn in result for conn in ["并", "然后", "同时"]) and sum([modify_kw, add_kw, delete_kw]) >= 1: # 或者包含连接词且至少一种操作
+                 # (这个回退逻辑比较粗糙，可能误判)
+                 # return "composite" # 暂时注释掉这个较弱的复合判断
+                 pass # 继续检查单一意图
+            
+            # 单一意图检查
+            if modify_kw: return "modify"
+            if add_kw: return "add"
+            if delete_kw: return "delete"
+            
+            return "confirm_other" # 默认
     except Exception as e:
         print(f"调用 LLM 进行 classify_main_intent 时出错: {e}")
         return "confirm_other"

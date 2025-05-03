@@ -107,6 +107,29 @@ def stage_add_action(state: GraphState) -> Dict[str, Any]:
         # lastest_content_production 已由新增流程设置
     }
 
+def stage_combined_action(state: GraphState) -> Dict[str, Any]:
+    """
+    节点动作：暂存【复合】操作（可能包含修改、新增等），并向用户请求确认。
+    """
+    print("---节点: 暂存复合操作---")
+    content_to_confirm = state.get("content_combined") # 获取复合预览文本
+    operation_plan = state.get("lastest_content_production") # 获取复合操作计划列表
+
+    if not content_to_confirm or not operation_plan:
+        print("错误：无法暂存复合操作，缺少预览内容或操作计划。")
+        return {"error_message": "无法暂存复合操作，缺少必要内容。"}
+    
+    if not isinstance(operation_plan, list):
+         print(f"错误：无法暂存复合操作，操作计划格式不正确（应为列表，实际为 {type(operation_plan)}）。")
+         return {"error_message": "无法暂存复合操作，操作计划格式错误。"}
+
+    confirmation_message = f"以下是即将执行的【复合操作】，请确认，并回复'是'/'否'\n\n{content_to_confirm}"
+    return {
+        "save_content": "复合路径", # 设置新的标记
+        "final_answer": confirmation_message
+        # lastest_content_production (操作计划) 已由上游节点设置
+    }
+
 def handle_nothing_to_stage_action(state: GraphState) -> Dict[str, Any]:
     """
     节点动作：处理无法确定要暂存哪个操作的情况。
@@ -230,8 +253,33 @@ def execute_operation_action(state: GraphState) -> Dict[str, Any]:
             print(error_message)
             api_call_result = {"error": error_message} # 记录错误到结果中
 
-    # elif save_content == "删除路径":
-        # ... (未来实现)
+    elif save_content == "复合路径":
+        # --- 执行复合操作 --- 
+        operation_plan = state.get("lastest_content_production")
+        if not operation_plan:
+            error_message = "执行复合操作失败：缺少操作计划 (lastest_content_production is empty or None)。"
+            print(error_message)
+            return {"error_message": error_message, "api_call_result": None}
+        if not isinstance(operation_plan, list):
+            error_message = f"执行复合操作失败：操作计划格式不正确 (应为列表，实际为 {type(operation_plan)})。"
+            print(error_message)
+            return {"error_message": error_message, "api_call_result": None}
+        
+        try:
+            print(f"调用 API /execute_batch_operations, payload: {operation_plan}")
+            # 调用新的 API 客户端函数
+            api_call_result = api_client.execute_batch_operations(operation_plan)
+            print(f"API 调用结果: {api_call_result}")
+            # 检查 API 返回的顶层错误
+            if isinstance(api_call_result, dict) and "error" in api_call_result:
+                error_message = f"API 批量操作失败: {api_call_result['error']}"
+                print(error_message)
+            # 这里也可以检查更详细的内部错误，如果后端返回的话
+
+        except Exception as e:
+            error_message = f"执行复合操作 API 调用时发生错误: {e}"
+            print(error_message)
+            api_call_result = {"error": error_message}
 
     else:
         # 处理未知的 save_content 类型
@@ -271,12 +319,19 @@ def reset_after_operation_action(state: GraphState) -> Dict[str, Any]:
         update_dict["content_new"] = None
         update_dict["raw_add_llm_output"] = None
         update_dict["structured_add_records"] = None
+        update_dict["add_structured_records_str"] = None
+        update_dict["add_processed_records_str"] = None
+        update_dict["add_preview_text"] = None
         update_dict["add_error_message"] = None
         update_dict["lastest_content_production"] = None # 清空新增负载
     elif save_content == "删除路径":
         update_dict["delete_show"] = None
         update_dict["delete_context_sql"] = None
         update_dict["delete_array"] = None # 清空删除负载
+    elif save_content == "复合路径": # 新增分支
+        update_dict["content_combined"] = None
+        update_dict["combined_operation_plan"] = None
+        update_dict["lastest_content_production"] = None # 统一清理
         
     # 总是尝试清理 lastest_content_production 以防万一
     if "lastest_content_production" not in update_dict:
@@ -295,6 +350,8 @@ def format_operation_response_action(state: GraphState) -> Dict[str, Any]:
     query = state.get("user_query", "") # 修改此行: 获取原始用户查询
     final_answer = "操作已提交。"
     op_type_str = {"修改路径": "修改", "新增路径": "新增", "删除路径": "删除"}.get(save_content, "未知操作")
+    if save_content == "复合路径": # 单独处理复合路径的名称
+        op_type_str = "复合操作"
 
     # 优先显示执行阶段产生的错误信息
     if error_message:
