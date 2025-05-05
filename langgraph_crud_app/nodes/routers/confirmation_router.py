@@ -59,56 +59,52 @@ def _route_confirmation_entry_logic(state: GraphState) -> Literal[
 def _stage_operation_logic(state: GraphState) -> Literal[
     "stage_modify_action",
     "stage_add_action",
-    "stage_combined_action", # 新增复合操作暂存
-    # "stage_delete_action", # 未来扩展
-    "handle_nothing_to_stage" # 无法确定暂存哪个操作
+    "stage_delete_action",
+    "stage_combined_action",
+    "handle_nothing_to_stage"
 ]:
     """
     路由逻辑：判断应该暂存哪种操作。
     对应 Dify 节点: 1742272764317
-    修改：增加对复合操作预览 content_combined 的检查。
+    修改：增加对 content_delete 和 content_combined 的检查。
     """
     content_modify = state.get("content_modify")
     content_new = state.get("content_new")
-    content_combined = state.get("content_combined") # 获取复合预览
-    # delete_show = state.get("delete_show") # 未来扩展
+    content_delete = state.get("content_delete")
+    content_combined = state.get("content_combined")
 
-    print(f"---路由逻辑: 尝试暂存，modify: {'有' if content_modify else '无'}, new: {'有' if content_new else '无'}, combined: {'有' if content_combined else '无'}---")
+    print(f"---路由逻辑: 尝试暂存，modify: {'有' if content_modify else '无'}, new: {'有' if content_new else '无'}, delete: {'有' if content_delete else '无'}, combined: {'有' if content_combined else '无'}---")
 
-    # 优先级：复合 > 修改 > 新增 (暂定)
-    if content_combined:
-        return "stage_combined_action" # 优先路由到复合暂存
-    elif content_modify:
+    if content_modify:
         return "stage_modify_action"
     elif content_new:
         return "stage_add_action"
-    # elif delete_show:
-    #     return "stage_delete_action"
+    elif content_delete:
+        return "stage_delete_action"
+    elif content_combined:
+        return "stage_combined_action"
     else:
-        # 如果都没有内容，则无法暂存
         return "handle_nothing_to_stage"
 
 def _check_staged_operation_logic(state: GraphState) -> Literal[
-    "ask_confirm_modify_node", # 复用确认逻辑
-    # "ask_confirm_add_node", # 复用确认逻辑
-    # "ask_confirm_delete_node", # 未来扩展
-    "handle_invalid_save_state" # save_content 状态无效或与其他状态不符
+    "ask_confirm_modify_node",
+    "handle_invalid_save_state"
 ]:
     """
     路由逻辑：根据 save_content 判断具体是哪种确认流程。
     对应 Dify 节点: 1742350590415
-    修改：增加对 "复合路径" 的检查。
+    修改：增加对 "删除路径" 的检查。
     """
     save_content = state.get("save_content")
     content_modify = state.get("content_modify")
     content_new = state.get("content_new")
-    content_combined = state.get("content_combined") # 获取复合预览
-    # delete_show = state.get("delete_show") # 未来扩展
-    lastest_content_production = state.get("lastest_content_production") # 获取待生产数据
+    content_delete = state.get("content_delete")
+    content_combined = state.get("content_combined")
+    lastest_content_production = state.get("lastest_content_production")
+    delete_show = state.get("delete_show")
 
-    print(f"---路由逻辑: 检查暂存操作，save_content: '{save_content}', modify: {'有' if content_modify else '无'}, new: {'有' if content_new else '无'}, combined: {'有' if content_combined else '无'}, production: {'有' if lastest_content_production else '无'}---")
+    print(f"---路由逻辑: 检查暂存操作，save_content: '{save_content}', modify: {'有' if content_modify else '无'}, new: {'有' if content_new else '无'}, delete: {'有' if content_delete else '无'}, combined: {'有' if content_combined else '无'}, production: {'有' if lastest_content_production else '无'}, delete_show: {'有' if delete_show else '无'}---")
 
-    # 检查逻辑调整：确保 save_content 与对应的预览内容和待生产数据一致
     if save_content == "修改路径" and content_modify and lastest_content_production:
         print("路由到修改确认询问")
         return "ask_confirm_modify_node"
@@ -117,11 +113,11 @@ def _check_staged_operation_logic(state: GraphState) -> Literal[
         return "ask_confirm_modify_node"
     elif save_content == "复合路径" and content_combined and lastest_content_production:
         print("路由到复合操作确认询问 (复用修改逻辑)")
-        return "ask_confirm_modify_node" # 复用同一个确认询问节点
-    # elif save_content == "删除路径" and delete_show:
-    #     return "ask_confirm_delete_node"
+        return "ask_confirm_modify_node"
+    elif save_content == "删除路径" and content_delete:
+        print("路由到删除确认询问 (复用修改逻辑)")
+        return "ask_confirm_modify_node"
     else:
-        # 如果 save_content 的值与实际状态不符
         print(f"警告: save_content ('{save_content}') 与实际状态不一致或缺少必要数据。")
         return "handle_invalid_save_state"
 

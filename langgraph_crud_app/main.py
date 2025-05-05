@@ -58,7 +58,7 @@ def main():
                     final_state = event # 保留最后返回的状态对象
 
                 # 在循环结束后打印最终结果
-                print("\n--- 查询处理完成 ---")
+                print("\n--- 处理完成 ---")
                 if final_state:
                     print(f"  最终答案: {final_state.get('final_answer')}")
                     if final_state.get('error_message'):

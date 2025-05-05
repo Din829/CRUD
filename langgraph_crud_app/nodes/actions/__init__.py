@@ -1,3 +1,6 @@
+# 修改导入: 从 nodes 下的 actions 和 routers 子目录导入
+# 从 nodes.actions 导入需要的 *函数* 而不是模块
+
 from .preprocessing_actions import (
     fetch_schema_action,
     extract_table_names_action,
@@ -47,10 +50,21 @@ from .add_actions import (
     format_add_preview_action,
     provide_add_feedback_action,
     handle_add_error_action,
+    finalize_add_response,
 )
 from .composite_actions import (
     parse_combined_request_action,
+    process_composite_placeholders_action,
     format_combined_preview_action
+)
+from .delete_actions import (
+    generate_delete_preview_sql_action,
+    clean_delete_sql_action,
+    execute_delete_preview_sql_action,
+    format_delete_preview_action,
+    provide_delete_feedback_action,
+    handle_delete_error_action,
+    finalize_delete_response,
 )
 
 
@@ -86,6 +100,7 @@ __all__ = [
     "format_add_preview_action",
     "provide_add_feedback_action",
     "handle_add_error_action",
+    "finalize_add_response",
     # Flow Control / Confirmation
     "handle_reset_action",
     "stage_modify_action",
@@ -101,5 +116,14 @@ __all__ = [
     "handle_delete_intent_action",
     # Composite Actions
     "parse_combined_request_action",
-    "format_combined_preview_action"
+    "process_composite_placeholders_action",
+    "format_combined_preview_action",
+    # delete
+    "generate_delete_preview_sql_action",
+    "clean_delete_sql_action",
+    "execute_delete_preview_sql_action",
+    "format_delete_preview_action",
+    "provide_delete_feedback_action",
+    "handle_delete_error_action",
+    "finalize_delete_response",
 ] 

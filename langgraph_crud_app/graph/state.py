@@ -1,6 +1,11 @@
 # state.py: 定义 LangGraph 应用的状态 TypedDict。
 
 from typing import List, TypedDict, Optional, Any, Dict
+# 尝试从 typing_extensions 导入
+try:
+    from typing import NotRequired
+except ImportError:
+    from typing_extensions import NotRequired
 
 class GraphState(TypedDict):
     """
@@ -71,3 +76,18 @@ class GraphState(TypedDict):
 
     # === 通用状态 ===
     # ... existing code ... 
+
+    # --- Delete Flow Specific ---
+    delete_preview_sql: NotRequired[Optional[str]]  # SQL query to fetch records for delete preview
+    delete_show: NotRequired[Optional[str]]         # JSON string result of the preview query
+    delete_preview_text: NotRequired[Optional[str]] # User-friendly text preview of records to be deleted
+    delete_error_message: NotRequired[Optional[str]] # Specific error messages for delete flow
+    content_delete: NotRequired[Optional[str]]      # Staged delete preview text for confirmation flow
+    delete_ids_llm_output: NotRequired[Optional[str]] # Raw LLM output when parsing IDs to delete
+    delete_ids_structured_str: NotRequired[Optional[str]] # JSON string like '{"table1": ["id1"], "table2": ["id2", "id3"]}'
+    delete_api_result: NotRequired[Optional[Any]] # Result from the delete API call(s)
+
+    # --- General ---
+    final_answer: NotRequired[str]
+    # ... any other existing fields like error_flag ...
+    error_flag: NotRequired[bool] # 确保这个或其他通用字段存在 

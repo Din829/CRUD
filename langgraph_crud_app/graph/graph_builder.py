@@ -10,7 +10,7 @@ from langgraph_crud_app.nodes.routers import initialization_router, main_router,
 # 从 nodes.actions 导入需要的 *函数* 而不是模块
 from langgraph_crud_app.nodes.actions import (
     # Preprocessing
-    fetch_schema_action,
+    fetch_schema_action, 
     extract_table_names_action,
     process_table_names_action,
     format_schema_action,
@@ -50,6 +50,8 @@ from langgraph_crud_app.nodes.actions import (
     parse_combined_request_action,
     format_combined_preview_action
 )
+# Explicitly import stage_delete_action from its actual location
+from langgraph_crud_app.nodes.actions.flow_control_actions import stage_delete_action
 # 单独导入 add_actions 中的函数
 from langgraph_crud_app.nodes.actions.add_actions import (
     parse_add_request_action,
@@ -66,6 +68,17 @@ from langgraph_crud_app.nodes.actions.composite_actions import (
     parse_combined_request_action,
     format_combined_preview_action,
     process_composite_placeholders_action
+)
+
+# 新增：从 delete_actions 导入
+from langgraph_crud_app.nodes.actions.delete_actions import (
+    generate_delete_preview_sql_action,
+    clean_delete_sql_action,
+    execute_delete_preview_sql_action,
+    format_delete_preview_action,
+    provide_delete_feedback_action,
+    handle_delete_error_action,
+    finalize_delete_response,
 )
 
 # --- 内部路由逻辑函数 ---
@@ -93,23 +106,46 @@ def _route_after_context_sql_execution(state: GraphState) -> Literal["parse_modi
         return "parse_modify_request_action"
 
 def _route_add_flow_on_error(state: GraphState) -> Literal["handle_add_error", "continue"]:
-    """检查新增流程步骤中的错误状态."""
-    # --- DEBUG: 打印进入路由函数时的状态 (使用新键名) --- 
-    print(f"--- Debug: Routing Add Flow - State received by router ---")
-    # --- 新增：打印完整状态 --- 
-    print(f"路由函数接收到的完整状态: {state}") 
-    # --- END 新增 ---
-    print(f"    temp_add_llm_data: {state.get('temp_add_llm_data')}") # 更新键名
-    print(f"    add_parse_error: {state.get('add_parse_error')}")
-    print(f"    add_error_message: {state.get('add_error_message')}")
-    # --- END DEBUG ---
-    
+    """检查新增流程步骤中的错误状态。"""
+    print("--- Debug: Routing Add Flow - State received by router ---")
     parse_error = state.get("add_parse_error")
     process_error = state.get("add_error_message")
     if parse_error or process_error:
         print(f"--- Routing Add Flow to Error Handler. ParseError: {parse_error}, ProcessError: {process_error} ---")
         return "handle_add_error"
     else:
+        # 检查 temp_add_llm_data 是否存在，如果不存在也应报错
+        if state.get("temp_add_llm_data") is None and not parse_error:
+             print("--- Routing Add Flow to Error Handler. temp_add_llm_data is None but no parse_error reported. ---")
+             return "handle_add_error"
+        print("--- Routing Add Flow to Continue ---")
+        return "continue"
+
+# 新增：删除流程错误路由
+def _route_delete_flow_on_error(state: GraphState) -> Literal["handle_delete_error_action", "continue"]:
+    """检查删除流程步骤中的错误状态或 LLM 提示。"""
+    print("--- Debug: Routing Delete Flow - State received by router ---")
+    error_message = state.get("delete_error_message")
+    # 检查 generate_sql 步骤是否直接返回了 final_answer (表示 LLM 返回了提示)
+    final_answer_at_start = state.get("final_answer") 
+    # 检查 SQL 是否为空，这也是一种错误或停止信号
+    preview_sql = state.get("delete_preview_sql")
+
+    if error_message:
+        print(f"--- Routing Delete Flow to Error Handler. Error: {error_message} ---")
+        return "handle_delete_error_action"
+    # 如果 generate_sql 设置了 final_answer，说明 LLM 没生成 SQL，流程应停止
+    elif final_answer_at_start:
+        print(f"--- Routing Delete Flow to End (via final_answer): {final_answer_at_start} ---")
+        # 这里直接路由到 handle_delete_error，让它设置 error_flag 并结束
+        # 或者可以创建一个专门的"停止"节点
+        return "handle_delete_error_action"
+    elif preview_sql is None and not error_message and not final_answer_at_start:
+        # SQL 为空，且没有明确的错误或提示，也视为错误
+         print("--- Routing Delete Flow to Error Handler. delete_preview_sql is None without reported error. ---")
+         return "handle_delete_error_action"
+    else:
+        print("--- Routing Delete Flow to Continue ---")
         return "continue"
 
 # --- 构建图 ---
@@ -119,82 +155,94 @@ def build_graph() -> StateGraph:
 
     # --- 添加节点 ---
     # 初始化流程节点
-    graph.add_node("route_initialization_node", initialization_router.route_initialization_node)
-    graph.add_node("fetch_schema", fetch_schema_action)
-    graph.add_node("extract_table_names", extract_table_names_action)
-    graph.add_node("process_table_names", process_table_names_action)
-    graph.add_node("format_schema", format_schema_action)
-    graph.add_node("fetch_sample_data", fetch_sample_data_action)
-    graph.add_node("handle_init_error", lambda state: {"final_answer": f"初始化错误: {state.get('error_message', '未知错误')}"})
+    graph.add_node("route_initialization_node", initialization_router.route_initialization_node) # 图入口，检查是否需要初始化
+    graph.add_node("fetch_schema", fetch_schema_action) # 调用 API 获取 Schema
+    graph.add_node("extract_table_names", extract_table_names_action) # LLM 提取表名
+    graph.add_node("process_table_names", process_table_names_action) # 清理表名列表
+    graph.add_node("format_schema", format_schema_action) # LLM 格式化 Schema
+    graph.add_node("fetch_sample_data", fetch_sample_data_action) # 调用 API 获取数据示例
+    graph.add_node("handle_init_error", lambda state: {"final_answer": f"初始化错误: {state.get('error_message', '未知错误')}"}) # 处理初始化错误
 
     # 主流程路由节点
-    graph.add_node("classify_main_intent_node", main_router.classify_main_intent_node)
+    graph.add_node("classify_main_intent_node", main_router.classify_main_intent_node) # LLM 分类用户主意图
 
     # 查询/分析 路由节点
-    graph.add_node("classify_query_analysis_node", query_analysis_router.classify_query_analysis_node)
-    graph.add_node("route_after_query_execution", query_analysis_router.route_after_query_execution_node)
+    graph.add_node("classify_query_analysis_node", query_analysis_router.classify_query_analysis_node) # LLM 分类查询/分析子意图
+    graph.add_node("route_after_query_execution", query_analysis_router.route_after_query_execution_node) # SQL 执行后路由决策点
 
     # 主流程控制动作节点 (从 actions.flow_control_actions 导入)
-    graph.add_node("handle_reset", handle_reset_action)
-    graph.add_node("handle_add_intent", handle_add_intent_action)
-    graph.add_node("handle_delete_intent", handle_delete_intent_action)
+    graph.add_node("handle_reset", handle_reset_action) # 处理重置意图
+    graph.add_node("handle_add_intent", handle_add_intent_action) # (占位符/未使用?)
+    graph.add_node("handle_delete_intent", handle_delete_intent_action) # (占位符/未使用?)
 
     # 查询/分析 动作节点
-    graph.add_node("generate_select_sql", generate_select_sql_action)
-    graph.add_node("generate_analysis_sql", generate_analysis_sql_action)
-    graph.add_node("clean_sql", clean_sql_action)
-    graph.add_node("execute_sql_query", execute_sql_query_action)
-    graph.add_node("format_query_result", format_query_result_action)
-    graph.add_node("analyze_analysis_result", analyze_analysis_result_action)
-    graph.add_node("handle_clarify_query", handle_clarify_query_action)
-    graph.add_node("handle_clarify_analysis", handle_clarify_analysis_action)
-    graph.add_node("handle_query_not_found", handle_query_not_found_action)
-    graph.add_node("handle_analysis_no_data", handle_analysis_no_data_action)
+    graph.add_node("generate_select_sql", generate_select_sql_action) # LLM 生成 SELECT SQL
+    graph.add_node("generate_analysis_sql", generate_analysis_sql_action) # LLM 生成分析 SQL
+    graph.add_node("clean_sql", clean_sql_action) # 清理 SQL 语句
+    graph.add_node("execute_sql_query", execute_sql_query_action) # 调用 API 执行 SQL 查询
+    graph.add_node("format_query_result", format_query_result_action) # LLM 格式化查询结果
+    graph.add_node("analyze_analysis_result", analyze_analysis_result_action) # LLM 分析结果
+    graph.add_node("handle_clarify_query", handle_clarify_query_action) # 处理查询需澄清
+    graph.add_node("handle_clarify_analysis", handle_clarify_analysis_action) # 处理分析需澄清
+    graph.add_node("handle_query_not_found", handle_query_not_found_action) # 处理查询无结果
+    graph.add_node("handle_analysis_no_data", handle_analysis_no_data_action) # 处理分析无数据
 
     # 确认流程路由节点
-    graph.add_node("route_confirmation_entry", confirmation_router.route_confirmation_entry)
-    graph.add_node("stage_operation_node", confirmation_router.stage_operation_node)
-    graph.add_node("check_staged_operation_node", confirmation_router.check_staged_operation_node)
-    graph.add_node("ask_confirm_modify_node", confirmation_router.ask_confirm_modify_node)
+    graph.add_node("route_confirmation_entry", confirmation_router.route_confirmation_entry) # 确认流程入口
+    graph.add_node("stage_operation_node", confirmation_router.stage_operation_node) # 路由到具体暂存动作
+    graph.add_node("check_staged_operation_node", confirmation_router.check_staged_operation_node) # 检查已暂存的操作
+    graph.add_node("ask_confirm_modify_node", confirmation_router.ask_confirm_modify_node) # 询问用户最终确认
 
     # 确认流程动作节点
-    graph.add_node("stage_modify_action", stage_modify_action)
-    graph.add_node("stage_add_action", stage_add_action)
-    graph.add_node("handle_nothing_to_stage", handle_nothing_to_stage_action)
-    graph.add_node("handle_invalid_save_state", handle_invalid_save_state_action)
-    graph.add_node("cancel_save_action", cancel_save_action)
-    graph.add_node("execute_operation_action", execute_operation_action)
-    graph.add_node("reset_after_operation_action", reset_after_operation_action)
-    graph.add_node("format_operation_response_action", format_operation_response_action)
+    graph.add_node("stage_modify_action", stage_modify_action) # 暂存修改操作
+    graph.add_node("stage_add_action", stage_add_action) # 暂存新增操作
+    graph.add_node("handle_nothing_to_stage", handle_nothing_to_stage_action) # 处理无操作可暂存
+    graph.add_node("handle_invalid_save_state", handle_invalid_save_state_action) # 处理无效暂存状态
+    graph.add_node("cancel_save_action", cancel_save_action) # 用户取消保存操作
+    graph.add_node("execute_operation_action", execute_operation_action) # 调用 API 执行操作 (增/改/复合/删)
+    graph.add_node("reset_after_operation_action", reset_after_operation_action) # 操作后重置状态
+    graph.add_node("format_operation_response_action", format_operation_response_action) # LLM 格式化操作结果
 
     # 新增：修改流程动作节点 (从 actions.modify_actions 导入)
-    graph.add_node("parse_modify_request_action", parse_modify_request_action)
-    graph.add_node("validate_and_store_modification_action", validate_and_store_modification_action)
-    graph.add_node("handle_modify_error_action", handle_modify_error_action)
-    graph.add_node("provide_modify_feedback_action", provide_modify_feedback_action)
+    graph.add_node("parse_modify_request_action", parse_modify_request_action) # LLM 解析修改请求 (含上下文)
+    graph.add_node("validate_and_store_modification_action", validate_and_store_modification_action) # 验证并存储解析结果
+    graph.add_node("handle_modify_error_action", handle_modify_error_action) # 处理修改流程错误
+    graph.add_node("provide_modify_feedback_action", provide_modify_feedback_action) # 提供修改预览给用户
 
     # 新增：修改流程上下文查询节点
-    graph.add_node("generate_modify_context_sql_action", generate_modify_context_sql_action)
-    graph.add_node("execute_modify_context_sql_action", execute_modify_context_sql_action)
+    graph.add_node("generate_modify_context_sql_action", generate_modify_context_sql_action) # LLM 生成获取修改上下文的 SQL
+    graph.add_node("execute_modify_context_sql_action", execute_modify_context_sql_action) # 执行上下文 SQL
 
     # 新增：添加流程动作节点
-    graph.add_node("parse_add_request", parse_add_request_action)
-    graph.add_node("process_add_llm_output", process_add_llm_output_action)
-    graph.add_node("process_placeholders", process_placeholders_action)
-    graph.add_node("format_add_preview", format_add_preview_action)
-    graph.add_node("provide_add_feedback", provide_add_feedback_action)
-    graph.add_node("handle_add_error", handle_add_error_action)
+    graph.add_node("parse_add_request", parse_add_request_action) # LLM 解析新增请求
+    graph.add_node("process_add_llm_output", process_add_llm_output_action) # 清理/结构化新增 LLM 输出
+    graph.add_node("process_placeholders", process_placeholders_action) # 处理新增流程占位符 (db/random)
+    graph.add_node("format_add_preview", format_add_preview_action) # LLM 格式化新增预览
+    graph.add_node("provide_add_feedback", provide_add_feedback_action) # 提供新增预览给用户
+    graph.add_node("handle_add_error", handle_add_error_action) # 处理新增流程错误
 
     # 新增：添加 finalize_add_response 节点
-    graph.add_node("finalize_add_response", finalize_add_response)
+    graph.add_node("finalize_add_response", finalize_add_response) # (占位符/确保合并状态?)
 
     # 新增：复合操作节点
-    graph.add_node("parse_combined_request", parse_combined_request_action)
-    graph.add_node("format_combined_preview", format_combined_preview_action)
-    graph.add_node("stage_combined_action", stage_combined_action) # 添加复合暂存节点注册
+    graph.add_node("parse_combined_request", parse_combined_request_action) # LLM 解析复合请求
+    graph.add_node("format_combined_preview", format_combined_preview_action) # LLM 格式化复合预览
+    graph.add_node("stage_combined_action", stage_combined_action) # 暂存复合操作
 
     # 新增：复合占位符处理节点
-    graph.add_node("process_composite_placeholders", process_composite_placeholders_action)
+    graph.add_node("process_composite_placeholders", process_composite_placeholders_action) # 处理复合流程占位符 (db/random)
+
+    # 新增：删除流程节点
+    graph.add_node("generate_delete_preview_sql_action", generate_delete_preview_sql_action)
+    graph.add_node("clean_delete_sql_action", clean_delete_sql_action)
+    graph.add_node("execute_delete_preview_sql_action", execute_delete_preview_sql_action)
+    graph.add_node("format_delete_preview_action", format_delete_preview_action)
+    graph.add_node("provide_delete_feedback_action", provide_delete_feedback_action)
+    graph.add_node("handle_delete_error_action", handle_delete_error_action)
+    graph.add_node("finalize_delete_response", finalize_delete_response)
+
+    # 新增：确认流程中的 stage_delete_action 节点
+    graph.add_node("stage_delete_action", stage_delete_action)
 
     # --- 设置入口点 ---
     graph.set_entry_point("route_initialization_node")
@@ -227,7 +275,7 @@ def build_graph() -> StateGraph:
             "continue_to_modify": "generate_modify_context_sql_action",
             "start_add_flow": "parse_add_request",
             "start_composite_flow": "parse_combined_request",
-            "start_delete_flow": END, # 指向删除占位符或未来实现的节点
+            "start_delete_flow": "generate_delete_preview_sql_action",
             "reset_flow": "handle_reset",
             "continue_to_confirmation": "route_confirmation_entry"
         }
@@ -272,7 +320,7 @@ def build_graph() -> StateGraph:
         confirmation_router._route_confirmation_entry_logic,
         {
             "check_staged_operation_node": "check_staged_operation_node",
-            "stage_operation_node": "stage_operation_node"
+            "stage_operation_node": "stage_operation_node" 
         }
     )
     # 确认流程 - 操作阶段路由 (添加 stage_add_action)
@@ -283,6 +331,7 @@ def build_graph() -> StateGraph:
             "stage_modify_action": "stage_modify_action",
             "stage_add_action": "stage_add_action", # 新增路由
             "stage_combined_action": "stage_combined_action", # 新增：复合暂存路由
+            "stage_delete_action": "stage_delete_action", # *** 添加删除暂存分支 ***
             "handle_nothing_to_stage": "handle_nothing_to_stage"
         }
     )
@@ -312,6 +361,8 @@ def build_graph() -> StateGraph:
     graph.add_edge("stage_modify_action", END)
     graph.add_edge("stage_add_action", END)
     graph.add_edge("stage_combined_action", END)
+    graph.add_edge("stage_delete_action", END) # *** 添加删除暂存结束边 ***
+    graph.add_edge("handle_nothing_to_stage", END)
 
     # 查询/分析 子意图路由
     graph.add_conditional_edges(
@@ -399,6 +450,43 @@ def build_graph() -> StateGraph:
 
     # 确认流程动作序列 (使用重命名后的节点)
     graph.add_edge("execute_operation_action", "reset_after_operation_action")
+
+    # 新增：删除流程边
+    graph.add_conditional_edges(
+        "generate_delete_preview_sql_action",
+        _route_delete_flow_on_error, # 使用新的错误路由逻辑
+        {
+            "continue": "clean_delete_sql_action",
+            "handle_delete_error_action": "handle_delete_error_action"
+        }
+    )
+    graph.add_conditional_edges(
+        "clean_delete_sql_action",
+        _route_delete_flow_on_error, # 复用错误检查
+        {
+            "continue": "execute_delete_preview_sql_action",
+            "handle_delete_error_action": "handle_delete_error_action"
+        }
+    )
+    graph.add_conditional_edges(
+        "execute_delete_preview_sql_action",
+        _route_delete_flow_on_error, # 复用错误检查
+        {
+            "continue": "format_delete_preview_action",
+            "handle_delete_error_action": "handle_delete_error_action"
+        }
+    )
+    graph.add_conditional_edges(
+        "format_delete_preview_action",
+        _route_delete_flow_on_error, # 复用错误检查
+        {
+            "continue": "provide_delete_feedback_action",
+            "handle_delete_error_action": "handle_delete_error_action"
+        }
+    )
+    graph.add_edge("provide_delete_feedback_action", "finalize_delete_response")
+    graph.add_edge("finalize_delete_response", END)
+    graph.add_edge("handle_delete_error_action", END) # 错误路径结束
 
     # 通用结束和重置边
     graph.add_edge("handle_init_error", END)

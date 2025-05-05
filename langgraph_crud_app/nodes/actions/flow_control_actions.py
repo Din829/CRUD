@@ -1,6 +1,6 @@
 # nodes/flow_control_actions.py: 包含主要流程控制相关的动作节点。
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import json # 新增导入
 
 # 导入状态定义
@@ -8,6 +8,8 @@ from langgraph_crud_app.graph.state import GraphState
 # 导入服务
 from langgraph_crud_app.services import api_client # 新增导入
 from langgraph_crud_app.services.llm import llm_flow_control_service # 新增导入
+# 新增导入删除 LLM 服务
+from langgraph_crud_app.services.llm import llm_delete_service
 
 # --- 主流程占位符/简单动作节点 ---
 
@@ -104,7 +106,7 @@ def stage_add_action(state: GraphState) -> Dict[str, Any]:
     return {
         "save_content": "新增路径",
         "final_answer": confirmation_message
-        # lastest_content_production 已由新增流程设置
+        # lastest_content_production 已由新增流程设置，此处不修改
     }
 
 def stage_combined_action(state: GraphState) -> Dict[str, Any]:
@@ -128,6 +130,23 @@ def stage_combined_action(state: GraphState) -> Dict[str, Any]:
         "save_content": "复合路径", # 设置新的标记
         "final_answer": confirmation_message
         # lastest_content_production (操作计划) 已由上游节点设置
+    }
+
+def stage_delete_action(state: GraphState) -> Dict[str, Any]:
+    """
+    节点动作：暂存【删除】操作，并向用户请求确认。
+    """
+    print("---节点: 暂存删除操作---")
+    content_to_delete = state.get("content_delete") # 获取删除预览文本
+
+    if not content_to_delete:
+        print("错误：无法暂存删除，缺少预览内容。")
+        return {"error_message": "无法暂存删除操作，缺少预览内容。"}
+
+    confirmation_message = f"请仔细检查以下将要删除的内容：\\n\\n{content_to_delete}\\n\\n请输入 '是' 确认删除，或输入 '否' 取消。"
+    return {
+        "save_content": "删除路径", # 设置删除标记
+        "final_answer": confirmation_message
     }
 
 def handle_nothing_to_stage_action(state: GraphState) -> Dict[str, Any]:
@@ -163,234 +182,311 @@ def cancel_save_action(state: GraphState) -> Dict[str, Any]:
 
 def execute_operation_action(state: GraphState) -> Dict[str, Any]:
     """
-    节点动作：执行暂存的操作（修改或新增），调用相应 API。
+    节点动作：执行暂存的操作（修改、新增、复合、删除），调用相应 API。
     """
     save_content = state.get("save_content")
     api_call_result = None
     error_message = None
+    updates: Dict[str, Any] = {} # 用于收集所有状态更新
 
     print(f"---节点: 执行操作 (类型: {save_content})---")
 
-    if save_content == "修改路径":
-        # --- 执行修改 --- 
-        latest_production = state.get("lastest_content_production")
-        if not latest_production:
-            error_message = "执行修改失败：缺少待处理的负载数据。"
-            print(error_message)
-            return {"error_message": error_message, "api_call_result": None}
+    try: # 将所有操作包裹在一个 try 中，简化错误处理
+        if save_content == "修改路径":
+            # --- 执行修改 ---
+            latest_production = state.get("lastest_content_production")
+            if not latest_production:
+                raise ValueError("执行修改失败：缺少待处理的负载数据。")
+            if not isinstance(latest_production, list):
+                raise ValueError("执行修改失败：待处理的负载数据格式不正确（应为列表）。")
 
-        flask_payload = latest_production 
-        if not isinstance(flask_payload, list):
-             error_message = "执行修改失败：待处理的负载数据格式不正确（应为列表）。"
-             print(error_message)
-             return {"error_message": error_message, "api_call_result": None}
-
-        try:
-            print(f"调用 API /update_record, payload: {flask_payload}")
-            api_call_result = api_client.update_record(flask_payload)
+            print(f"调用 API /update_record, payload: {latest_production}")
+            api_call_result = api_client.update_record(latest_production)
             print(f"API 调用结果: {api_call_result}")
-            # 检查 API 返回错误
-            if isinstance(api_call_result, list) and any("error" in item for item in api_call_result):
-                first_error = next((item["error"] for item in api_call_result if "error" in item), "未知 API 错误")
-                error_message = f"API 更新操作部分或全部失败: {first_error}"
-            elif isinstance(api_call_result, dict) and "error" in api_call_result:
-                error_message = f"API 更新操作失败: {api_call_result['error']}"
+            # 检查 API 返回错误 (通用化处理移到 try 块末尾)
 
-            if error_message: print(error_message)
+        elif save_content == "新增路径":
+            # --- 执行新增 ---
+            latest_production = state.get("lastest_content_production")
+            if latest_production is None:
+                raise ValueError("执行新增失败：缺少处理后的记录 (lastest_content_production is None)。")
+            if not isinstance(latest_production, list):
+                raise ValueError(f"执行新增失败：处理后的记录格式不正确 (应为列表，实际为 {type(latest_production)})。")
+            if not latest_production:
+                raise ValueError("执行新增失败：没有需要新增的记录 (lastest_content_production is empty)。")
 
-        except Exception as e:
-            error_message = f"执行修改 API 调用时发生错误: {e}"
-            print(error_message)
-            api_call_result = {"error": error_message}
+            print(f"调用 API /insert_record, payload: {latest_production}")
+            api_call_result = api_client.insert_record(latest_production)
+            print(f"API 调用结果: {api_call_result}")
+
+        elif save_content == "复合路径":
+            # --- 执行复合操作 ---
+            latest_production = state.get("lastest_content_production")
+            if not latest_production:
+                 raise ValueError("执行复合操作失败：缺少操作计划列表。")
+            if not isinstance(latest_production, list):
+                 raise ValueError("执行复合操作失败：操作计划格式不正确（应为列表）。")
+
+            print(f"调用 API /execute_batch_operations, payload: {latest_production}")
+            api_call_result = api_client.execute_batch_operations(latest_production) # 调用批量接口
+            print(f"API 调用结果: {api_call_result}")
+
+        elif save_content == "删除路径":
+            # --- 执行删除 ---
+            print("--- 执行: 删除操作 ---")
+            delete_show_json = state.get("delete_show")
+            schema_info = state.get("biaojiegou_save")
+            table_names = state.get("table_names")
             
-    elif save_content == "新增路径":
-        # --- 执行新增 --- 
-        # 修改：直接从 lastest_content_production 获取处理后的 List[Dict]
-        latest_production = state.get("lastest_content_production") 
-        # 移除: add_processed_records = state.get("add_processed_records") # 这不再需要
+            # 检查是否已经在预览步骤中确认没有找到记录
+            content_delete = state.get("content_delete")
+            if content_delete == "未找到需要删除的记录。":
+                print("--- 预览已确认没有记录需要删除，跳过删除操作 ---")
+                api_call_result = {"message": "未找到需要删除的记录。"}
+                updates["api_call_result"] = api_call_result
+                updates["delete_api_result"] = api_call_result
+                return updates
+                
+            if not delete_show_json or not schema_info or not table_names:
+                raise ValueError("缺少解析删除 ID 所需的信息 (delete_show, schema, table_names)")
 
-        if latest_production is None: # 检查 None
-            error_message = "执行新增失败：缺少处理后的记录 (lastest_content_production is None)。"
-            print(error_message)
-            return {"error_message": error_message, "api_call_result": None}
-        if not isinstance(latest_production, list):
-            error_message = f"执行新增失败：处理后的记录格式不正确 (lastest_content_production 应为列表，实际为 {type(latest_production)})。"
-            print(error_message)
-            return {"error_message": error_message, "api_call_result": None}
-        if not latest_production: # 检查列表是否为空
-            error_message = "执行新增失败：没有需要新增的记录 (lastest_content_production is empty)。"
-            print(error_message)
-            return {"error_message": error_message, "api_call_result": None}
+            # 检查是否为空结果
+            if delete_show_json.strip() == '[]':
+                print("--- 删除预览为空列表，无需执行删除操作 ---")
+                api_call_result = {"message": "未找到需要删除的记录。"}
+                updates["api_call_result"] = api_call_result
+                updates["delete_api_result"] = api_call_result
+                return updates
 
-        # 提取 API 需要的 List[Dict] (只包含字段部分) -> 修改：直接传递完整的记录列表
-        # 现在 latest_production 本身就是结构化的 List[Dict[str, Any]]
-        # 假设格式是 [{ "table_name": ..., "fields": {...} }, ...]
-        # 我们只需要提取 "fields" 部分 -> 错误，API 需要完整的结构
-        # flask_payload = []
-        # for record in latest_production:
-        #     if isinstance(record, dict) and "fields" in record and isinstance(record["fields"], dict):
-        #         flask_payload.append(record["fields"])
-        #     else:
-        #          print(f"警告：跳过格式不正确的记录进行新增：{record}")
-        
-        # if not flask_payload:
-        #      error_message = "执行新增失败：无法从处理后的记录 (lastest_content_production) 中提取有效的待插入数据。"
-        #      print(error_message)
-        #      return {"error_message": error_message, "api_call_result": None}
+            # 1. 调用直接解析函数替代LLM解析
+            parsed_ids_llm_output = llm_delete_service.parse_delete_ids_direct(delete_show_json, schema_info, table_names)
+            updates["delete_ids_llm_output"] = parsed_ids_llm_output # 存储解析输出
 
-        # 直接使用 latest_production 作为 payload
-        flask_payload = latest_production
+            # 2. 解析输出
+            try:
+                # 解析JSON输出
+                temp_data = json.loads(parsed_ids_llm_output)
+                structured_ids_dict = temp_data.get("result", {})
+                if not isinstance(structured_ids_dict, dict):
+                        raise ValueError("解析的 ID 结构不是预期的字典格式")
+            except (json.JSONDecodeError, ValueError) as e:
+                raise ValueError(f"解析返回的删除 ID 时出错: {e}") from e
 
-        # 正确的 try...except 结构
-        try:
-            print(f"调用 API /insert_record, payload: {flask_payload}")
-            api_call_result = api_client.insert_record(flask_payload)
-            print(f"API 调用结果: {api_call_result}")
+            # 存储解析后的结构化 ID
+            updates["delete_ids_structured_str"] = json.dumps(structured_ids_dict, ensure_ascii=False)
 
-        except Exception as e:
-            # 捕获 API 调用本身的异常
-            error_message = f"执行新增 API 调用时发生错误: {e}"
-            print(error_message)
-            api_call_result = {"error": error_message} # 记录错误到结果中
+            # 3. 准备并执行 API 调用
+            api_results_list = [] # 重命名以避免与外层变量冲突
+            if not structured_ids_dict:
+                print("--- 解析后无 ID 需要删除 ---")
+                api_call_result = {"message": "没有需要删除的记录。"} # 认为无操作是成功
+            else:
+                print(f"--- 准备删除以下 ID: {structured_ids_dict} ---")
+                try:
+                     schema_dict = json.loads(schema_info)
+                except json.JSONDecodeError:
+                     raise ValueError("无法解析 Schema 信息以获取主键")
 
-    elif save_content == "复合路径":
-        # --- 执行复合操作 --- 
-        operation_plan = state.get("lastest_content_production")
-        if not operation_plan:
-            error_message = "执行复合操作失败：缺少操作计划 (lastest_content_production is empty or None)。"
-            print(error_message)
-            return {"error_message": error_message, "api_call_result": None}
-        if not isinstance(operation_plan, list):
-            error_message = f"执行复合操作失败：操作计划格式不正确 (应为列表，实际为 {type(operation_plan)})。"
-            print(error_message)
-            return {"error_message": error_message, "api_call_result": None}
-        
-        try:
-            print(f"调用 API /execute_batch_operations, payload: {operation_plan}")
-            # 调用新的 API 客户端函数
-            api_call_result = api_client.execute_batch_operations(operation_plan)
-            print(f"API 调用结果: {api_call_result}")
-            # 检查 API 返回的顶层错误
-            if isinstance(api_call_result, dict) and "error" in api_call_result:
-                error_message = f"API 批量操作失败: {api_call_result['error']}"
-                print(error_message)
-            # 这里也可以检查更详细的内部错误，如果后端返回的话
+                delete_payloads = []
+                for table_name, ids_to_delete in structured_ids_dict.items():
+                    if not ids_to_delete: continue
+                    try:
+                        table_schema = schema_dict.get(table_name, {})
+                        fields = table_schema.get("fields", {})
+                        primary_key = next(field for field, info in fields.items() if info.get("key") == "PRI")
+                    except StopIteration:
+                        api_results_list.append({"table": table_name, "error": "无法确定主键"})
+                        continue
+                    for id_val in ids_to_delete:
+                        delete_payloads.append({
+                            "table_name": table_name,
+                            "primary_key": primary_key,
+                            "primary_value": id_val
+                        })
 
-        except Exception as e:
-            error_message = f"执行复合操作 API 调用时发生错误: {e}"
-            print(error_message)
-            api_call_result = {"error": error_message}
+                # 执行删除 (逐条)
+                if delete_payloads:
+                    print(f"开始逐条删除 {len(delete_payloads)} 条记录...")
+                    for payload in delete_payloads:
+                            try:
+                                result = api_client.delete_record(
+                                    table_name=payload["table_name"],
+                                    primary_key=payload["primary_key"],
+                                    primary_value=payload["primary_value"]
+                                )
+                                api_results_list.append({"table": payload["table_name"], "id": payload["primary_value"], **result})
+                            except Exception as api_err:
+                                print(f"API delete error for {payload['table_name']} ID {payload['primary_value']}: {api_err}")
+                                api_results_list.append({"table": payload["table_name"], "id": payload["primary_value"], "error": str(api_err)})
+                    print("--- 逐条删除完成 ---")
+                    api_call_result = api_results_list # 将列表作为结果
+                else:
+                    # 如果解析后发现没有有效载荷（可能因为主键错误等）
+                     api_call_result = {"message": "没有有效的记录可供删除。"} if not api_results_list else api_results_list
 
-    else:
-        # 处理未知的 save_content 类型
-        if save_content:
-             error_message = f"执行操作失败：未知的 save_content 类型 '{save_content}'。"
+            # 将删除结果存入特定键和通用键
+            updates["delete_api_result"] = api_call_result
+            updates["api_call_result"] = api_call_result  # 同时存入通用键，确保格式化响应能够正确获取结果
+
         else:
-             error_message = "执行操作失败：未指定操作类型 (save_content 为空)。"
-        print(error_message)
+            error_message = f"未知的操作类型: {save_content}"
+            print(error_message)
+            updates["error_message"] = error_message
+            updates["api_call_result"] = None # 明确设为 None
+            return updates # 直接返回错误状态
 
-    # 返回结果
-    return {
-        "api_call_result": json.dumps(api_call_result) if api_call_result is not None else None, 
-        "error_message": error_message # 返回检测到的错误或 None
-    }
+        # --- 通用 API 结果检查 ---
+        if api_call_result is not None:
+            updates["api_call_result"] = api_call_result # 确保结果被记录
+            # 检查列表类型结果中的错误
+            if isinstance(api_call_result, list) and any(isinstance(item, dict) and "error" in item for item in api_call_result):
+                first_error = next((item["error"] for item in api_call_result if isinstance(item, dict) and "error" in item), "未知 API 错误")
+                error_message = f"API 操作部分或全部失败: {first_error}"
+            # 检查字典类型结果中的错误
+            elif isinstance(api_call_result, dict) and "error" in api_call_result:
+                error_message = f"API 操作失败: {api_call_result['error']}"
+
+            if error_message:
+                 print(f"API 调用报告错误: {error_message}")
+                 updates["error_message"] = error_message # 记录错误
+
+        else: # 如果前面某个分支没有设置 api_call_result
+             if not updates.get("error_message"): # 且没有明确错误
+                 error_message = f"操作 '{save_content}' 未产生 API 调用结果。"
+                 print(error_message)
+                 updates["error_message"] = error_message
+
+
+    except Exception as e:
+        error_message = f"执行操作 '{save_content}' 时发生意外错误: {e}"
+        print(error_message)
+        updates["error_message"] = error_message
+        updates["api_call_result"] = None # 发生异常时清空结果
+
+    # 无论成功或失败，都返回所有更新
+    return updates
 
 def reset_after_operation_action(state: GraphState) -> Dict[str, Any]:
     """
-    节点动作：操作完成后，清空相关状态。
-    根据 save_content 清理对应流程的状态。
+    节点动作：在成功执行操作（或即使失败，只要流程继续）后，清空相关的暂存和预览状态。
     """
-    save_content = state.get("save_content")
-    print(f"---节点: 重置操作后状态 (类型: {save_content})---")
-    
-    update_dict = {
-        "save_content": None,
-        # "api_call_result": None # 保留给 format_response
-    }
-    
-    if save_content == "修改路径":
-        update_dict["content_modify"] = None
-        update_dict["raw_modify_llm_output"] = None
-        update_dict["modify_context_sql"] = None
-        update_dict["modify_context_result"] = None
-        update_dict["modify_error_message"] = None
-        update_dict["lastest_content_production"] = None # 清空修改负载
-    elif save_content == "新增路径":
-        update_dict["content_new"] = None
-        update_dict["raw_add_llm_output"] = None
-        update_dict["structured_add_records"] = None
-        update_dict["add_structured_records_str"] = None
-        update_dict["add_processed_records_str"] = None
-        update_dict["add_preview_text"] = None
-        update_dict["add_error_message"] = None
-        update_dict["lastest_content_production"] = None # 清空新增负载
-    elif save_content == "删除路径":
-        update_dict["delete_show"] = None
-        update_dict["delete_context_sql"] = None
-        update_dict["delete_array"] = None # 清空删除负载
-    elif save_content == "复合路径": # 新增分支
-        update_dict["content_combined"] = None
-        update_dict["combined_operation_plan"] = None
-        update_dict["lastest_content_production"] = None # 统一清理
-        
-    # 总是尝试清理 lastest_content_production 以防万一
-    if "lastest_content_production" not in update_dict:
-         update_dict["lastest_content_production"] = None
-        
-    return update_dict
+    print("---节点: 操作后重置状态---")
+
+    keys_to_reset: List[str] = [
+        "save_content",
+        # Modify related
+        "content_modify",
+        "modify_context_sql",
+        "modify_context_result",
+        "raw_modify_llm_output",
+        "modify_error_message", # 清理旧流程错误
+        # Add related
+        "content_new",
+        "temp_add_llm_data",
+        "add_structured_records_str",
+        "structured_add_records", # 如果还使用的话
+        "add_processed_records_str",
+        "add_processed_records", # 如果还使用的话
+        "add_preview_text",
+        "add_error_message", # 清理旧流程错误
+        "add_parse_error", # 清理旧流程错误
+         # Delete related - 新增
+        "delete_preview_sql",
+        "delete_show",
+        "delete_preview_text",
+        "delete_error_message", # 清理旧流程错误
+        "content_delete",
+        "delete_ids_llm_output",
+        "delete_ids_structured_str",
+        # "delete_api_result", # 不再清理删除 API 结果，确保格式化响应能获取到它
+         # Composite related
+        "combined_operation_plan",
+        "content_combined",
+        # Common execution related
+        "lastest_content_production", # 清空待执行负载
+        # "api_call_result", # 不再清理通用 API 结果，格式化响应需要它
+        "delete_array", # 如果确认流程中还用到的话
+        # ... 其他可能需要重置的中间状态 ...
+        # 不重置: final_answer (由下一步生成), error_message (可能需要传递)
+    ]
+
+    updates = {key: None for key in keys_to_reset}
+    print(f"重置状态键: {list(updates.keys())}")
+    return updates
 
 def format_operation_response_action(state: GraphState) -> Dict[str, Any]:
     """
-    节点动作：格式化操作（修改/新增/删除）的最终回复。
+    节点动作：调用 LLM 格式化 API 调用结果（成功或失败）为最终回复。
     """
-    print("---节点: 格式化操作回复---")
-    api_result_str = state.get("api_call_result")
-    error_message = state.get("error_message") # 获取执行阶段的错误
-    save_content = state.get("save_content") # 获取操作类型 (例如: '修改路径', '新增路径')
-    query = state.get("user_query", "") # 修改此行: 获取原始用户查询
-    final_answer = "操作已提交。"
-    op_type_str = {"修改路径": "修改", "新增路径": "新增", "删除路径": "删除"}.get(save_content, "未知操作")
-    if save_content == "复合路径": # 单独处理复合路径的名称
-        op_type_str = "复合操作"
+    print("---节点: 格式化操作响应---")
+    
+    # 首先检查通用结果，然后检查特定删除结果
+    api_result_data = state.get("api_call_result")
+    delete_api_result = state.get("delete_api_result")
+    
+    # 如果通用结果为空但存在删除结果，则使用删除结果
+    if api_result_data is None and delete_api_result is not None:
+        api_result_data = delete_api_result
+        print(f"使用删除特定API结果: {api_result_data}")
+    
+    error_message_from_execution = state.get("error_message") # 通用执行错误
+    user_query = state.get("user_query", "用户操作")
+    save_content = state.get("save_content") # 获取操作类型标记
 
-    # 优先显示执行阶段产生的错误信息
-    if error_message:
-        # 这里可以考虑是否也用 LLM 美化错误信息，但目前保持直接显示
-        final_answer = f"抱歉，处理您的 {op_type_str} 请求时遇到问题：\n{error_message}"
-        print(f"返回执行阶段错误信息: {final_answer}")
-        # 保持错误信息状态可能有助于调试，暂时不清除
-        return {"final_answer": final_answer}
+    # 日志输出
+    print(f"操作类型: {save_content}")
+    print(f"API结果: {api_result_data}")
+    print(f"执行错误: {error_message_from_execution}")
 
-    # 如果没有执行错误，尝试使用 LLM 格式化成功信息
-    if api_result_str:
-        try:
-            api_result = json.loads(api_result_str)
+    # 映射 save_content 到用户友好的操作类型字符串
+    op_type_str = {
+        "修改路径": "修改",
+        "新增路径": "新增",
+        "删除路径": "删除",
+        "复合路径": "复合操作"
+    }.get(save_content, "未知操作")
 
-            # 调用 llm_flow_control_service 中的 format_api_result 函数
-            print(f"调用 LLM 格式化 API 结果 (类型: {op_type_str})...")
-            # 将 LLM 调用移到 try 块内部
+    final_answer = "操作出现未知问题。" # 默认回复
+
+    try:
+        # 修正参数传递
+        if error_message_from_execution: # 如果执行层捕获了顶层错误
+            print(f"格式化执行层错误信息: {error_message_from_execution}")
             final_answer = llm_flow_control_service.format_api_result(
-                result=api_result,
-                original_query=query,
-                operation_type=op_type_str # 传递更友好的操作类型字符串
+                result=None, # 没有成功结果
+                original_query=user_query,
+                operation_type=op_type_str
             )
-            print(f"LLM 格式化后的回复: {final_answer}")
+            # 如果 format_api_result 不能很好地处理顶层错误，提供回退消息
+            if "未知" in final_answer:
+                final_answer = f"操作失败：{error_message_from_execution}"
 
-        except json.JSONDecodeError as e:
-            # 这个 except 块现在紧跟 try
-            print(f"解析 API 结果 JSON 时出错: {e}。结果字符串: {api_result_str}")
-            final_answer = f"{op_type_str} 操作已提交，但无法解析 API 返回结果。请在后台确认。"
-        except Exception as e:
-            # 这个 except 块也紧跟 try
-            # 捕获 LLM 调用或其他意外错误
-            print(f"调用 LLM 格式化 API 结果时出错: {e}")
-            # 使用备用消息
-            final_answer = f"{op_type_str} 操作已成功提交，但在生成最终回复时遇到问题。请在数据库中确认结果。"
-            
-    else: # 这个 else 对应 if api_result_str:
-        # 如果 API 结果为空，但也没有错误信息
-        print("警告：API 结果为空且无错误信息，将返回通用成功消息。")
-        final_answer = f"{op_type_str} 操作已提交。请在后台确认结果。"
+        elif api_result_data is not None: # 如果有 API 结果
+            print(f"格式化 API 结果: {api_result_data}")
+            final_answer = llm_flow_control_service.format_api_result(
+                result=api_result_data, # 传递 API 结果
+                original_query=user_query,
+                operation_type=op_type_str
+            )
+            # 如果是删除操作且结果是列表
+            if op_type_str == "删除" and isinstance(api_result_data, list):
+                # 提供更友好的默认消息
+                successful_count = sum(1 for item in api_result_data if isinstance(item, dict) and "error" not in item)
+                if successful_count > 0:
+                    if "未知" in final_answer:  # 如果LLM格式化失败了
+                        final_answer = f"成功删除了 {successful_count} 条记录。"
+        else:
+            print("警告: 无法格式化响应，既无 API 结果也无错误信息。")
+            if op_type_str == "删除":
+                final_answer = "删除操作已执行，但无法获取具体结果。请检查数据以确认。"
+            else:
+                final_answer = f"{op_type_str}操作状态未知，请检查系统日志。"
 
-    # 清理本次操作的错误信息（如果执行成功到这里）
-    return {"final_answer": final_answer, "error_message": None} 
+    except Exception as e:
+        print(f"ERROR in format_operation_response_action: {e}")
+        if op_type_str == "删除":
+            final_answer = "删除操作已执行，但格式化响应时出错。请检查数据以确认删除结果。"
+        else:
+            final_answer = f"格式化最终响应时出错: {e}"
+
+    return {"final_answer": final_answer} 

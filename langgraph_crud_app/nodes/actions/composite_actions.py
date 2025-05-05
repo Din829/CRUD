@@ -71,9 +71,9 @@ def _process_value(value: Any): # 移除 cursor 参数，使用全局 api_client
     """递归处理值中的占位符 (db 和 random)。"""
     if isinstance(value, str):
         # 优先处理 db 占位符
-        db_match = re.match(r'\{\{db\((.*?)\)\}\}', value)
+        db_match = re.match(r'\{\{db\((.*?)\)\}\}', value) # 修改：使用正则表达式匹配 db 占位符
         if db_match:
-            subquery = db_match.group(1).strip()
+            subquery = db_match.group(1).strip() # 修改：提取子查询
             try:
                 logger.info(f"Resolving db placeholder '{value}' with query: {subquery}")
                 # 注意：直接执行子查询可能不安全
@@ -90,9 +90,9 @@ def _process_value(value: Any): # 移除 cursor 参数，使用全局 api_client
                 return None
 
         # 处理 random 占位符
-        random_match = re.match(r'\{\{random\((.*?)\)\}\}', value)
+        random_match = re.match(r'\{\{random\((.*?)\)\}\}', value) # 修改：使用正则表达式匹配 random 占位符
         if random_match:
-            random_type = random_match.group(1).strip().lower()
+            random_type = random_match.group(1).strip().lower() # 修改：提取类型
             random_value = None
             if random_type == 'string':
                 random_value = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
@@ -144,7 +144,7 @@ def process_composite_placeholders_action(state: GraphState) -> Dict[str, Any]:
             processed_operation = {} # 创建新的字典存储处理后的操作
             for op_key, op_value in operation.items():
                 if op_key in ["values", "set", "where"] and isinstance(op_value, dict):
-                    processed_dict = {}
+                    processed_dict = {} # 创建新的字典存储处理后的字典
                     for field_key, field_value in op_value.items():
                          # 对 set 中的值进行特殊处理，避免处理 SQL 表达式
                          should_process = True

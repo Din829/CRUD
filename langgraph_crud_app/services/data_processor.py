@@ -9,6 +9,28 @@ import uuid # Add uuid import for random UUID generation
 # Import API client for placeholder resolution
 from .api_client import execute_query 
 
+def is_sql_part_balanced(sql_part: str) -> bool:
+    """
+    检查SQL片段中的括号是否平衡。
+    
+    Args:
+        sql_part: SQL片段
+        
+    Returns:
+        如果括号平衡返回True，否则返回False
+    """
+    stack = []
+    bracket_pairs = {')': '(', '}': '{', ']': '['}
+    
+    for char in sql_part:
+        if char in '({[':
+            stack.append(char)
+        elif char in ')}]':
+            if not stack or stack.pop() != bracket_pairs[char]:
+                return False
+    
+    return len(stack) == 0  # 栈为空表示所有括号都匹配
+
 def nl_string_to_list(names_str: str) -> List[str]:
     """
     将换行符分隔的字符串转换为字符串列表，并移除空行。
@@ -31,7 +53,7 @@ def nl_string_to_list(names_str: str) -> List[str]:
 
 def clean_sql_string(sql: str) -> str:
     """
-    清理 LLM 生成的 SQL 字符串，移除常见的多余字符。
+    清理 LLM 生成的 SQL 字符串，仅移除Markdown代码块和注释，保留完整的SQL结构。
     对应 Dify code 节点 '1742268810496' 和 '17432988044960' 的逻辑。
 
     Args:
@@ -42,17 +64,54 @@ def clean_sql_string(sql: str) -> str:
     """
     if not sql:
         return ""
+        
+    # 记录原始SQL长度
+    original_length = len(sql)
+    print(f"--- 清理SQL前长度: {original_length} ---")
+    
     # 移除常见的 Markdown 代码块标记
     cleaned_sql = re.sub(r'^```sql\s*', '', sql, flags=re.IGNORECASE)
+    cleaned_sql = re.sub(r'^```mysql\s*', '', cleaned_sql, flags=re.IGNORECASE)
     cleaned_sql = re.sub(r'\s*```$', '', cleaned_sql)
+    
     # 移除可能存在的前后空白符
     cleaned_sql = cleaned_sql.strip()
-    # 将换行符替换为空格，并将多个空格合并为一个
-    cleaned_sql = ' '.join(cleaned_sql.replace('\n', ' ').split())
-    # 移除末尾可能的分号
-    if cleaned_sql.endswith(';'):
-        cleaned_sql = cleaned_sql[:-1].strip()
-    return cleaned_sql 
+    
+    # 不执行空白字符替换，保留原始格式
+    # 只合并连续的多个空格为一个空格，保留换行和缩进
+    # cleaned_sql = re.sub(r' {2,}', ' ', cleaned_sql)
+    
+    # 清理SQL注释，但保留其他所有内容
+    cleaned_sql = re.sub(r'--.*?$', '', cleaned_sql, flags=re.MULTILINE)
+    cleaned_sql = re.sub(r'/\*.*?\*/', '', cleaned_sql, flags=re.DOTALL)
+    
+    # 再次清理前后空白，但保留内部结构
+    cleaned_sql = cleaned_sql.strip()
+    
+    # 处理分号问题，确保SQL有一个结尾分号
+    has_semicolon = cleaned_sql.endswith(';')
+    if not has_semicolon:
+        cleaned_sql = cleaned_sql + ';'
+        print("--- 为SQL添加了分号 ---")
+    
+    # 检查括号是否平衡，但不修改SQL内容
+    if not is_sql_part_balanced(cleaned_sql):
+        print("--- 警告: SQL括号不平衡，可能导致语法错误 ---")
+    
+    # 最终检查：确保SQL是以SELECT开头，但不修改
+    if not cleaned_sql.upper().strip().startswith('SELECT'):
+        print(f"--- 警告：清理后的SQL不是以SELECT开头: {cleaned_sql[:50]}... ---")
+    
+    # 检查WHERE子句是否存在且看起来完整
+    where_match = re.search(r'\bWHERE\b\s+([^)]{1,50})$', cleaned_sql, re.IGNORECASE)
+    if where_match:
+        print(f"--- 警告: SQL可能在WHERE子句处不完整: '{where_match.group(0)}' ---")
+    
+    # 记录清理后的长度变化
+    final_length = len(cleaned_sql)
+    print(f"--- 清理SQL后长度: {final_length} (减少了 {original_length - final_length} 个字符) ---")
+    
+    return cleaned_sql
 
 def is_query_result_empty(result_str: Optional[str]) -> bool:
     """

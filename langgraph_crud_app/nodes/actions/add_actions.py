@@ -236,7 +236,7 @@ def format_add_preview_action(state: GraphState) -> Dict[str, Any]:
         return {
             "add_preview_text": preview_text,
             "content_new": preview_text, # 同时更新 content_new
-            "lastest_content_production": processed_records,
+            "lastest_content_production": processed_records, # 同时更新 lastest_content_production
             "add_error_message": None
         }
     except Exception as e:
@@ -258,7 +258,7 @@ def provide_add_feedback_action(state: GraphState) -> Dict[str, Any]:
     """动作节点：向用户提供生成的新增预览或错误信息。"""
     print("--- 动作: 提供新增反馈 ---")
     # 检查所有可能的错误状态
-    parse_error = state.get("add_parse_error")
+    parse_error = state.get("add_parse_error") 
     processing_error = state.get("add_error_message")
     preview = state.get("add_preview_text")
 
@@ -296,19 +296,3 @@ def finalize_add_response(state: GraphState) -> Dict[str, Any]:
     # 这个节点本身不需要做任何事情或返回任何更新
     return {}
 
-# --- 新增占位符动作，如果 parse_add_request_action 失败 ---
-# 这个节点不再需要，因为错误处理已整合进主流程和 provide_add_feedback_action
-# def handle_add_parse_error_action(state: GraphState) -> Dict[str, Any]:
-#     """
-#     处理新增请求解析失败的情况。
-#
-#     Args:
-#         state: 当前图状态。
-#
-#     Returns:
-#         一个字典，设置错误消息。
-#     """
-#     print("--- 节点: 处理新增解析错误 ---")
-#     error_message = state.get("add_parse_error", "解析新增请求时发生未知错误。")
-#     # 可以考虑将错误信息放入 agent_output 以便展示给用户
-#     return {"agent_output": error_message, "error_flag": True} 
