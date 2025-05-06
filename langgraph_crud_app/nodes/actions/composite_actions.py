@@ -77,8 +77,10 @@ def _process_value(value: Any): # 移除 cursor 参数，使用全局 api_client
             try:
                 logger.info(f"Resolving db placeholder '{value}' with query: {subquery}")
                 # 注意：直接执行子查询可能不安全
-                result = api_client.execute_query(subquery) # 使用导入的 client
-                if result and len(result) == 1 and len(result[0]) == 1:
+                result_str = api_client.execute_query(subquery) # 使用导入的 client
+                result = json.loads(result_str) # <--- 在这里添加 JSON 解析
+
+                if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict) and len(result[0]) == 1:
                     actual_value = list(result[0].values())[0]
                     logger.info(f"Resolved db placeholder '{value}' to '{actual_value}'")
                     return _process_value(actual_value)

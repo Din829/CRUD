@@ -8,8 +8,10 @@ import locale  # 新增：支持英文日期解析
 import json
 from decimal import Decimal
 import re # <--- 新增导入
+# from flask_cors import CORS # <--- 注释掉
 
 app = Flask(__name__)
+# CORS(app)  # 注释掉CORS
 logging.basicConfig(level=logging.DEBUG)
 
 # 数据库连接上下文管理器
@@ -33,24 +35,66 @@ def get_db_connection():
 def execute_query():
     data = request.get_json()
     sql_query = data.get('sql_query')
-    app.logger.debug(f"Received SQL query: {sql_query}")
+    app.logger.debug(f"Received SQL query length: {len(sql_query) if sql_query else 0}")
+    if len(sql_query) > 200:
+        app.logger.debug(f"Query start: {sql_query[:100]}...")
+        app.logger.debug(f"Query end: ...{sql_query[-100:]}")
 
     if not sql_query:
         return jsonify({"error": "No SQL query provided"}), 400
 
+    # 预处理SQL查询，清理尾部分号和空格以防止空语句错误
+    sql_query = sql_query.strip()
+    has_trailing_semicolon = sql_query.endswith(';')
+    # 先移除所有尾部分号
+    while sql_query.endswith(';'):
+        sql_query = sql_query[:-1].strip()  # 移除尾部分号并再次清理空格
+    
+    # 确保处理后的SQL不为空
+    if not sql_query:
+        return jsonify({"error": "Empty SQL query after processing"}), 400
+
+    # 安全检查：只允许SELECT语句
     if not sql_query.strip().upper().startswith('SELECT'):
         return jsonify({"error": "Only SELECT queries are allowed"}), 403
+    
+    # 对于MySQL，1064错误通常与语法相关，末尾分号有时是必要的
+    # 我们在发送给数据库前添加回分号
+    if has_trailing_semicolon:
+        sql_query = sql_query + ';'
+    
+    app.logger.debug(f"Processed SQL query length: {len(sql_query)}")
 
     with get_db_connection() as connection:
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(sql_query)
-                result = cursor.fetchall()
-                app.logger.debug(f"Query result: {result}")
-                return jsonify(result)
+            cursor = connection.cursor()
+            app.logger.debug("Executing SQL query...")
+            cursor.execute(sql_query)
+            result = cursor.fetchall()
+            app.logger.debug(f"Query returned {len(result)} rows")
+            
+            # 修复: 如果结果为空列表，直接返回空列表
+            if not result:
+                return jsonify([])
+                
+            # 我们不再需要手动处理列名，因为DictCursor已经将结果转为字典
+            return jsonify(result)
+
         except Exception as e:
-            app.logger.error(f"Error executing query: {str(e)}")
-            return jsonify({"error": str(e)}), 500
+            app.logger.error(f"Error executing query: {e}")
+            # 添加更详细的错误信息，特别是对于MySQL 1064错误
+            if "1064" in str(e):
+                # 特别处理此类常见错误
+                app.logger.error(f"MySQL syntax error detected: {e}")
+                # 尝试诊断错误更精确位置
+                error_match = re.search(r"near '(.*?)' at line (\d+)", str(e))
+                if error_match:
+                    near_text = error_match.group(1)
+                    line_num = error_match.group(2)
+                    app.logger.error(f"Syntax error near '{near_text}' at line {line_num}")
+                    return jsonify({"error": (1064, f"SQL syntax error near '{near_text}' at line {line_num}")}), 500
+            
+            return jsonify({"error": e.args}), 500
 
 
 
@@ -604,12 +648,13 @@ def delete_record():
                 # 提交事务
                 connection.commit()
                 
-                # 返回结果，原有逻辑不变
+                # 返回结果，修改状态码为200，但内容区分是否实际删除了记录
                 if affected_rows > 0:
                     app.logger.debug(f"Deleted record in {table_name}: {primary_key}={primary_value}")
                     return jsonify({"message": f"Record with {primary_key}={primary_value} deleted successfully"})
                 else:
-                    return jsonify({"error": f"No record found with {primary_key}={primary_value} in {table_name}"}), 404
+                    app.logger.debug(f"No record found with {primary_key}={primary_value} in {table_name}")
+                    return jsonify({"message": f"No record found with {primary_key}={primary_value} in {table_name}, but operation completed successfully"}), 200
 
         except Exception as e:
             # 异常时回滚事务

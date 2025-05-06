@@ -1,0 +1,25 @@
+错误报告 - 2024-05-06
+
+问题描述:
+在执行删除流程的确认步骤时，调用 `langgraph_crud_app.services.llm.llm_delete_service.parse_delete_ids` 函数失败。该函数负责调用 LLM，根据查询到的待删除记录（JSON 格式的 `delete_show_json`），解析出按表分组的主键 ID 列表，并返回结构化的 JSON。
+
+错误日志（最新一次尝试前）:
+反复出现 LangChain 模板解析错误，具体表现为以下两种之一：
+1. `missing variables {'"table_name"'}`: LangChain 错误地将 Prompt 中的字面字符串 `'"table_name"'` 识别为必需的输入变量。
+2. `Single '{' or '}' encountered in format string`: LangChain 在解析 Prompt 字符串时遇到未配对或未正确转义的大括号。
+
+涉及文件:
+- `langgraph_crud_app/services/llm/llm_delete_service.py` (函数 `parse_delete_ids` 和 Prompt `PARSE_DELETE_IDS_PROMPT`)
+- `langgraph_crud_app/nodes/actions/flow_control_actions.py` (调用 `parse_delete_ids` 的 `execute_operation_action`)
+
+已尝试的解决步骤:
+1.  检查并修改 `PARSE_DELETE_IDS_PROMPT` 中规则描述部分的特殊字符（移除反引号）。
+2.  暂时注释掉 `PARSE_DELETE_IDS_PROMPT` 中的示例部分。
+3.  在 `parse_delete_ids` 函数创建 `ChatPromptTemplate` 时，明确指定 `template_format="f-string"` 并添加变量检查。
+4.  移除 `template_format` 指定和变量检查，恢复默认模板创建。
+5.  修改 `PARSE_DELETE_IDS_PROMPT` 中描述输出 JSON 格式的规则，使用自然语言和单引号包裹的简单 JSON 示例，避免复杂的双大括号嵌套。
+6.  完全重写 `PARSE_DELETE_IDS_PROMPT`，模仿 `llm_composite_service.py` 中成功运行的 Prompt 风格（明确要求纯 JSON 输出，使用 `{{...}}` 描述结构，恢复并调整示例格式）。
+7.  在 `parse_delete_ids` 函数中添加了对 LLM 输出可能包含的 Markdown 代码块标记的清理。
+
+当前状态:
+已应用上述第 6 和第 7 步修改（即模仿 `composite` 流程重写 Prompt 和修改函数调用方式），准备进行新一轮测试，以验证模仿成功流程的 Prompt 写法是否解决了模板解析问题。（还是失败） 
