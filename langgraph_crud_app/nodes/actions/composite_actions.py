@@ -76,17 +76,34 @@ def _process_value(value: Any): # 移除 cursor 参数，使用全局 api_client
             subquery = db_match.group(1).strip() # 修改：提取子查询
             try:
                 logger.info(f"Resolving db placeholder '{value}' with query: {subquery}")
-                # 注意：直接执行子查询可能不安全
-                result_str = api_client.execute_query(subquery) # 使用导入的 client
-                result = json.loads(result_str) # <--- 在这里添加 JSON 解析
+                result_str = api_client.execute_query(subquery)
+                result = json.loads(result_str)
 
-                if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict) and len(result[0]) == 1:
-                    actual_value = list(result[0].values())[0]
-                    logger.info(f"Resolved db placeholder '{value}' to '{actual_value}'")
-                    return _process_value(actual_value)
-                else:
-                    logger.error(f"Subquery '{subquery}' did not return exactly one value. Result: {result}")
-                    return None
+                if isinstance(result, list):
+                    if not result:  # 空列表 []
+                        logger.info(f"Subquery '{subquery}' returned an empty list. Resolved to [].")
+                        return [] # 返回空列表，由API层处理IN ([])的情况
+                    
+                    # 检查是否所有行都只包含一个键值对 (通常是 SELECT id FROM ...)
+                    is_list_of_single_kv_dicts = True
+                    if not all(isinstance(row, dict) and len(row) == 1 for row in result):
+                        is_list_of_single_kv_dicts = False
+
+                    if len(result) == 1 and is_list_of_single_kv_dicts: # 单行单列，严格的单值
+                        actual_value = list(result[0].values())[0]
+                        logger.info(f"Resolved db placeholder '{value}' (single value) to '{actual_value}'")
+                        return _process_value(actual_value) # 递归处理以防值本身也是占位符
+                    elif is_list_of_single_kv_dicts: # 多行单列 (例如用于 IN 子句)
+                        actual_values_list = [list(row.values())[0] for row in result]
+                        logger.info(f"Resolved db placeholder '{value}' (list of values) to {actual_values_list}")
+                        # 对于列表结果，不再递归调用 _process_value，因为期望的是一个纯粹的值列表
+                        return actual_values_list 
+                    else: # 格式不符合单值或单列列表 (例如返回了多列)
+                        logger.error(f"Subquery '{subquery}' result format is not a single value or a list of single column values. Result: {result}")
+                        return None # 视为解析失败
+                else: # API 返回的不是列表格式 (理论上不应发生，execute_query 应返回列表或抛异常)
+                    logger.error(f"Subquery '{subquery}' result from API was not a list as expected. Result: {result}")
+                    return None # 视为解析失败
             except Exception as e:
                 logger.error(f"Error executing subquery '{subquery}': {e}")
                 return None

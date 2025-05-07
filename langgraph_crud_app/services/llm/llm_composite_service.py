@@ -50,37 +50,51 @@ def parse_combined_request(
 
 **核心规则:**
 
-1.  **输出格式**: 严格输出 JSON 列表 `[...]`。列表中的每个元素是一个代表单一数据库操作的 JSON 对象 `{{...}}`。输出纯 JSON 列表，不要包含任何其他文本或 Markdown 标记。如果无法解析或请求无效，返回空列表 `[]`。
+1.  **输出格式**: 严格输出 JSON 列表 `[...]`。列表中的每个元素是一个代表单一数据库操作的 JSON 对象 `{{{{...}}}}`。输出纯 JSON 列表，不要包含任何其他文本或 Markdown 标记。如果无法解析或请求无效，返回空列表 `[]`。
 2.  **操作对象结构**: 每个操作对象必须包含 `"operation"` 键 (`"insert"`, `"update"`, `"delete"`) 和 `"table_name"` 键。
 3.  **字段和表名**: 严格使用提供的 Schema 中的表名和字段名。
 4.  **顺序**: 列表中的操作顺序应尽可能反映逻辑依赖关系。
 
 **特殊值处理:**
 
-*   **数据库查询占位符 `{{{{db(...)}}}}`**: 如果操作（insert/update/delete）的某个值需要基于名称或描述从**其他表**查找获得（例如 "用户 'bob' 的 ID"，"分类为 '甜品' 的 ID"），**必须**在该操作的 `values` 或 `where` 子句中使用 `{{{{db(SELECT id FROM <相关表> WHERE <相关字段> = '值')}}}}` 占位符。你需要根据 Schema 和用户意图构造合适的 SQL 查询。**不要**为这种查找生成单独的操作步骤。
+*   **数据库查询占位符 `{{{{db(...)}}}}`**:
+    *   如果操作的某个值需要基于其他信息从数据库查找获得，**必须**在该操作的 `values` 或 `where` 子句中使用 `{{{{db(SELECT ...)}}}}` 占位符。
+    *   你需要根据 Schema 用户意图构造合适的 SQL 查询。**不要**为这种查找生成单独的操作步骤。
+    *   **对于 `IN` 或 `NOT IN` 操作符**，其后的 `{{{{db(...)}}}}` 子查询**可以返回多行结果** (即一个值列表)，这些值将用于构建 `IN (...)` 或 `NOT IN (...)` SQL子句。
+    *   **如果一个字段有多个通过 AND 连接的条件** (例如 `id IN (subquery1) AND id NOT IN (subquery2)`), **尝试将这些条件合并到 `{{{{db(...)}}}}` 内的单个 SQL 子查询中**。例如：`{{{{ "id": {{{{ "IN": "{{{{db(SELECT id FROM table1 WHERE ... AND id NOT IN (SELECT id FROM table2 WHERE ...))}}}}" }}}} }}}}`。如果无法在单个子查询中简单合并所有AND条件，可以为每个主要条件使用单独的 `{{{{db(...)}}}}` 占位符，并依赖后续步骤的 `WHERE` 子句构造逻辑来组合它们 (例如，后端会将 `{{{{ "id": {{{{ "IN": "{{{{db(query1)}}}}" }}}}, "status": {{{{"=": "active"}}}} }}}}` 解释为 `id IN (...) AND status = 'active'`)。但优先尝试合并到子查询中以简化JSON结构。
 *   **随机值占位符 `{{{{random(...)}}}}`**: 如果用户要求生成随机值 (例如 "随机密码", "生成UUID"), **必须**根据字段类型和常见模式生成 `{{{{random(string)}}}}`, `{{{{random(integer)}}}}`, `{{{{random(uuid)}}}}` 等占位符。 **不要自己生成实际的随机值**。
 *   **当前时间**: 如果用户要求使用当前时间，在 `values` 或 `set` 中使用字符串 `"now()"`。
-*   **SQL 表达式 (仅限 UPDATE)**: 如果 `update` 操作的 `set` 子句需要引用**被更新行本身**的其他字段进行计算（如 `count + 1`），直接在 `set` 的值中写入 SQL 表达式字符串，例如 `{{"count": "count + 1"}}` 或 `{{"email": "CONCAT(username, '@my.com')"}}`。
+*   **SQL 表达式 (仅限 UPDATE)**: 如果 `update` 操作的 `set` 子句需要引用**被更新行本身**的其他字段进行计算（如 `count + 1`），直接在 `set` 的值中写入 SQL 表达式字符串，例如 `{{{{ "count": "count + 1" }}}}` 或 `{{{{ "email": "CONCAT(username, '@my.com')" }}}}`。
 
 **操作类型细节:**
 
 *   **`insert`**:
     *   必须包含 `"values"` 字典。
-    *   **主键**: 参考 Schema，如果是自增主键 (通常 `extra` 包含 `auto_increment`)，**不要**在 `values` 中包含主键字段。如果是非自增主键，必须提供其值（可能是一个 `{{db(...)}}` 占位符）。
-    *   **依赖返回**: 如果后续操作需要此插入记录的 ID 或其他字段值，添加 `"return_affected": ["字段名1", ...]` (通常是主键字段名，如 `"id"`)。
+    *   **主键**: 参考 Schema，如果是自增主键 (通常 `extra` 包含 `auto_increment`)，**不要**在 `values` 中包含主键字段。如果是非自增主键，必须提供其值（可能是一个 `{{{{db(...)}}}}` 占位符）。
+    *   **依赖返回**: 如果后续操作需要此插入记录的 ID 或其他字段值，添加 `"return_affected": ["id"]` (通常是主键字段名，如 `"id"`)。
 
 *   **`update`**:
-    *   必须包含 `"where"` 字典（不能为空，其值可能是字面量或 `{{db(...)}}` 或 `{{previous_result[...]}}`）和 `"set"` 字典（不能为空）。
+    *   必须包含 `"where"` 字典（不能为空）和 `"set"` 字典（不能为空）。
+    *   `where` 字典的键是列名，值可以是：
+        *   直接的字面量 (例如 `{{{{ "id": 123 }}}}`，表示 `id = 123`)。
+        *   `{{{{db(...)}}}}` 或 `{{{{previous_result[...]}}}}` 占位符。这些占位符本身在被替换前是字符串。
+        *   一个描述操作符和值的字典。支持的操作符包括 `">"`, `"<"`, `">="`, `"<="`, `"LIKE"`, `"IN"`, `"NOT IN"`, `"BETWEEN"`。
+            *   示例: `{{{{ "age": {{{{ ">=": 18 }}}} }}}}` 表示 `age >= 18`。
+            *   示例: `{{{{ "status": {{{{ "IN": ["A", "B"] }}}} }}}}` 表示 `status IN ('A', 'B')` (IN 的值也可以是 `{{{{db(...)}}}}` 占位符，此时该占位符应被解析为一个值列表)。
+            *   示例: `{{{{ "score": {{{{ "BETWEEN": [80, 90] }}}} }}}}` 表示 `score BETWEEN 80 AND 90` (BETWEEN 的值必须是包含两个元素的列表)。
+            *   示例: `{{{{ "user_id": {{{{ "NOT IN": "{{{{db(SELECT user_id FROM banned_users)}}}}" }}}} }}}}` (NOT IN 的值也可以是 `{{{{db(...)}}}}` 占位符，解析后为值列表)。
+        *   对于同一字段的多个比较条件（例如范围查询 `X >= val1 AND X < val2`），应合并到同一个字段键下：`{{{{ "column_name": {{{{ ">=": "val1", "<": "val2" }}}} }}}}`。
     *   **依赖返回**: 如果后续操作需要此更新记录的某个字段值，添加 `"return_affected": ["字段名1", ...]`。
 
 *   **`delete`**:
-    *   必须包含 `"where"` 字典（不能为空，其值可能是字面量或 `{{db(...)}}` 或 `{{previous_result[...]}}`）。
+    *   必须包含 `"where"` 字典（不能为空）。
+    *   `where` 字典的键是列名，值的格式与 `update` 操作的 `where` 子句相同 (字面量, 占位符, 或包含操作符的字典)。
 
-**依赖关系处理 (`depends_on_index` 和 `{{previous_result...}}`)**:
+**依赖关系处理 (`depends_on_index` 和 `{{{{previous_result...}}}}`)**:
 
 *   如果一个操作（操作 B，索引 `M`）需要用到列表中**先前**某个操作（操作 A，索引 `N`，且 **N < M**）返回的值（通过 `"return_affected"` 指定），则：
     1.  在操作 B 中添加 `"depends_on_index": N`。 **必须确保 N 小于 M**。
-    2.  在操作 B 的 `values`, `set`, 或 `where` 子句中，使用占位符 `"{{{{previous_result[N].字段名}}}}"` 来引用操作 A 返回的值。例如：`{{"user_id": "{{{{previous_result[0].id}}}}"}}`。
+    2.  在操作 B 的 `values`, `set`, 或 `where` 子句中，使用占位符 `"{{{{previous_result[N].字段名}}}}"` 来引用操作 A 返回的值。例如：`{{{{ "user_id": "{{{{previous_result[0].id}}}}" }}}}`。
 
 **示例:**
 
@@ -90,14 +104,14 @@ def parse_combined_request(
       {{{{
         "operation": "insert",
         "table_name": "users",
-        "values": {{"username": "bob", "email": "bob@a.com", "created_at": "now()", "updated_at": "now()"}},
+        "values": {{ "username": "bob", "email": "bob@a.com", "created_at": "now()", "updated_at": "now()" }},
         "return_affected": ["id"]
       }}}},
       {{{{
         "operation": "update",
         "table_name": "users",
-        "where": {{"id": "{{{{previous_result[0].id}}}}"}},
-        "set": {{"email": "bob@b.com", "updated_at": "now()"}},
+        "where": {{ "id": "{{{{previous_result[0].id}}}}" }},
+        "set": {{ "email": "bob@b.com", "updated_at": "now()" }},
         "depends_on_index": 0
       }}}}
     ]
@@ -138,12 +152,52 @@ def parse_combined_request(
       {{{{
         "operation": "delete",
         "table_name": "prompts",
-        "where": {{"user_id": 15}}
+        "where": {{ "user_id": 15 }}
       }}}},
       {{{{
         "operation": "insert",
         "table_name": "api_tokens",
-        "values": {{"user_id": 15, "provider": "test", "token_value": "abc", "created_at": "now()", "updated_at": "now()"}}
+        "values": {{ "user_id": 15, "provider": "test", "token_value": "abc", "created_at": "now()", "updated_at": "now()" }}
+      }}}}
+    ]
+    ```
+*   请求："将所有2024年创建的提示（prompts）的类别改为'Archived'，并删除其中在2024年上半年（1月1日至6月30日）创建且类别为'OldCat'的提示。"
+    ```json
+    [
+      {{{{
+        "operation": "update",
+        "table_name": "prompts",
+        "where": {{
+          "created_at": {{ ">=": "2024-01-01 00:00:00", "<": "2025-01-01 00:00:00" }}
+        }},
+        "set": {{
+          "category": "Archived",
+          "updated_at": "now()"
+        }}
+      }}}},
+      {{{{
+        "operation": "delete",
+        "table_name": "prompts",
+        "where": {{
+          "created_at": {{ ">=": "2024-01-01 00:00:00", "<=": "2024-06-30 23:59:59" }},
+          "category": "OldCat"
+        }}
+      }}}}
+    ]
+    ```
+*   请求："对于拥有 OpenAI 令牌但没有提示的用户，将他们的邮箱后缀改为 '@no-prompts.com'。"
+    ```json
+    [
+      {{{{
+        "operation": "update",
+        "table_name": "users",
+        "where": {{
+          "id": {{ "IN": "{{{{db(SELECT t.user_id FROM api_tokens t LEFT JOIN prompts p ON t.user_id = p.user_id WHERE t.provider = 'OpenAI' AND p.id IS NULL GROUP BY t.user_id)}}}}" }}
+        }},
+        "set": {{
+          "email": "CONCAT(SUBSTRING_INDEX(email, '@', 1), '@no-prompts.com')",
+          "updated_at": "now()"
+        }}
       }}}}
     ]
     ```

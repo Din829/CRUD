@@ -104,11 +104,11 @@ def clean_delete_sql_action(state: GraphState) -> Dict[str, Any]:
                         break
         
         # 5. 检查SQL是否被截断，特别关注WHERE子句
-        where_match = re.search(r'\bWHERE\b\s+([^)]{1,50})$', cleaned_sql, re.IGNORECASE)
-        if where_match:
-            print(f"--- 警告: SQL可能在WHERE子句处被截断: '{where_match.group(0)}' ---")
-            error_msg = "SQL语句似乎被截断，请简化查询条件"
-            return {error_key: error_msg, "delete_preview_sql": None}
+        # where_match = re.search(r'\bWHERE\b\s+([^)]{1,50})$', cleaned_sql, re.IGNORECASE)
+        # if where_match:
+        #     print(f"--- 警告: SQL可能在WHERE子句处被截断: '{where_match.group(0)}' ---")
+        #     error_msg = "SQL语句似乎被截断，请简化查询条件"
+        #     return {error_key: error_msg, "delete_preview_sql": None}
             
         # 6. 括号平衡检查
         if not data_processor.is_sql_part_balanced(cleaned_sql):

@@ -215,6 +215,16 @@ def generate_delete_preview_sql(user_query: str, schema_info: str, table_names: 
         print(f"--- SQL前100个字符: {sql_output[:100]}... ---")
         print(f"--- SQL最后100个字符: ...{sql_output[-100:]} ---")
 
+        # 清理可能的 Markdown 代码块标记 (例如 ```sql ... ```)
+        if sql_output.startswith("```sql"):
+            sql_output = sql_output[6:] # 移除 ```sql
+        elif sql_output.startswith("```"):
+            sql_output = sql_output[3:] # 移除 ```
+        
+        if sql_output.endswith("```"):
+            sql_output = sql_output[:-3]
+        sql_output = sql_output.strip() # 再次 strip 以防万一
+
         # 基本检查：是否返回了提示信息而不是 SQL
         if sql_output.startswith("请提供有效") or sql_output == "":
              print("--- LLM 返回提示信息，非有效 SQL ---")

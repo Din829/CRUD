@@ -1,0 +1,206 @@
+## 错误报告 0507 - LangGraph CRUD 应用复合流程问题
+
+### 背景
+
+在 "0507查询测试" 提交之后，我们持续调试复合操作流程中 `langgraph_crud_app/services/llm/llm_composite_service.py` 文件内的 `parse_combined_request` 函数的提示模板（`prompt_template`）。目标是让 LLM 能够正确解析用户的复杂请求，并生成包含自定义占位符（如 `{{db(...)}}` 和 `{{previous_result[N].field_name}}`）的 JSON 操作计划，同时避免 LangChain 模板解析错误。
+
+### 对 llm_composite_service.py 的最后一次修改尝试
+
+以下是截至目前，对 `parse_combined_request` 函数内 `prompt_template` 的最后一次尝试修改的代码片段。我们主要围绕大括号的正确使用进行调整，以区分 LangChain 模板变量、JSON 结构字面量以及我们自定义的、希望 LLM 原样输出的占位符字符串。
+
+```python
+# --- Prompt 设计 (对齐单一流程, 处理复合操作, 增强查找和依赖) ---
+prompt_template = """
+你是一个强大的数据库操作规划器。你的任务是仔细分析用户的自然语言请求，该请求可能包含多个步骤，涉及对数据库的修改(UPDATE)、新增(INSERT)或删除(DELETE)操作。你需要将用户的请求分解为一系列按顺序执行的原子数据库操作，并以 JSON 列表的格式输出。
+
+可用信息:
+- 用户请求: {query}
+- 数据库 Schema (JSON): {schema}
+- 表名列表: {tables}
+- 数据示例 (JSON): {sample}
+
+**核心规则:**
+
+1.  **输出格式**: 严格输出 JSON 列表 `[...]`。列表中的每个元素是一个代表单一数据库操作的 JSON 对象 `{{...}}`。输出纯 JSON 列表，不要包含任何其他文本或 Markdown 标记。如果无法解析或请求无效，返回空列表 `[]`。
+2.  **操作对象结构**: 每个操作对象必须包含 `"operation"` 键 (`"insert"`, `"update"`, `"delete"`) 和 `"table_name"` 键。
+3.  **字段和表名**: 严格使用提供的 Schema 中的表名和字段名。
+4.  **顺序**: 列表中的操作顺序应尽可能反映逻辑依赖关系。
+
+**特殊值处理:**
+
+*   **数据库查询占位符 `{{db(...)}}`**: 
+    *   如果操作的某个值需要基于其他信息从数据库查找获得，**必须**在该操作的 `values` 或 `where` 子句中使用 `{{db(SELECT ...)}}` 占位符。
+    *   你需要根据 Schema 用户意图构造合适的 SQL 查询。**不要**为这种查找生成单独的操作步骤。
+    *   **对于 `IN` 或 `NOT IN` 操作符**，其后的 `{{db(...)}}` 子查询**可以返回多行结果** (即一个值列表)，这些值将用于构建 `IN (...)` 或 `NOT IN (...)` SQL子句。
+    *   **如果一个字段有多个通过 AND 连接的条件** (例如 `id IN (subquery1) AND id NOT IN (subquery2)`), **尝试将这些条件合并到 `{{db(...)}}` 内的单个 SQL 子查询中**。例如：`{{"id": {{ "IN": "{{{{db(SELECT id FROM table1 WHERE ... AND id NOT IN (SELECT id FROM table2 WHERE ...))}}}}" }} }}`。如果无法在单个子查询中简单合并所有AND条件，可以为每个主要条件使用单独的 `{{db(...)}}` 占位符，并依赖后续步骤的 `WHERE` 子句构造逻辑来组合它们 (例如，后端会将 `{{ "id": {{"IN": "{{db(query1)}}"}}, "status": {"=": "active"} }}` 解释为 `id IN (...) AND status = 'active'`)。但优先尝试合并到子查询中以简化JSON结构。
+*   **随机值占位符 `{{random(...)}}`**: 如果用户要求生成随机值 (例如 "随机密码", "生成UUID"), **必须**根据字段类型和常见模式生成 `{{random(string)}}`, `{{random(integer)}}`, `{{random(uuid)}}` 等占位符。 **不要自己生成实际的随机值**。
+*   **当前时间**: 如果用户要求使用当前时间，在 `values` 或 `set` 中使用字符串 `"now()"`。
+*   **SQL 表达式 (仅限 UPDATE)**: 如果 `update` 操作的 `set` 子句需要引用**被更新行本身**的其他字段进行计算（如 `count + 1`），直接在 `set` 的值中写入 SQL 表达式字符串，例如 `{{ "count": "count + 1" }}` 或 `{{ "email": "CONCAT(username, '@my.com')" }}`。
+
+**操作类型细节:**
+
+*   **`insert`**:
+    *   必须包含 `"values"` 字典。
+    *   **主键**: 参考 Schema，如果是自增主键 (通常 `extra` 包含 `auto_increment`)，**不要**在 `values` 中包含主键字段。如果是非自增主键，必须提供其值（可能是一个 `{{db(...)}}` 占位符）。
+    *   **依赖返回**: 如果后续操作需要此插入记录的 ID 或其他字段值，添加 `"return_affected": ["id"]` (通常是主键字段名，如 `"id"`)。
+
+*   **`update`**:
+    *   必须包含 `"where"` 字典（不能为空）和 `"set"` 字典（不能为空）。
+    *   `where` 字典的键是列名，值可以是：
+        *   直接的字面量 (例如 `{{ "id": 123 }}`，表示 `id = 123`)。
+        *   `{{db(...)}}` 或 `{{previous_result[...]}}` 占位符。这些占位符本身在被替换前是字符串。
+        *   一个描述操作符和值的字典。支持的操作符包括 `">"`, `"<"`, `">="`, `"<="`, `"LIKE"`, `"IN"`, `"NOT IN"`, `"BETWEEN"`。
+            *   示例: `{{ "age": {{ ">=": 18 }} }}` 表示 `age >= 18`。
+            *   示例: `{{ "status": {{ "IN": ["A", "B"] }} }}` 表示 `status IN ('A', 'B')` (IN 的值也可以是 `{{db(...)}}` 占位符，此时该占位符应被解析为一个值列表)。
+            *   示例: `{{ "score": {{ "BETWEEN": [80, 90] }} }}` 表示 `score BETWEEN 80 AND 90` (BETWEEN 的值必须是包含两个元素的列表)。
+            *   示例: `{{ "user_id": {{ "NOT IN": "{{{{db(SELECT user_id FROM banned_users)}}}}" }} }}` (NOT IN 的值也可以是 `{{db(...)}}` 占位符，解析后为值列表)。
+        *   对于同一字段的多个比较条件（例如范围查询 `X >= val1 AND X < val2`），应合并到同一个字段键下：`{{ "column_name": {{ ">=": "val1", "<": "val2" }} }}`。
+    *   **依赖返回**: 如果后续操作需要此更新记录的某个字段值，添加 `"return_affected": ["字段名1", ...]`。
+
+*   **`delete`**:
+    *   必须包含 `"where"` 字典（不能为空）。
+    *   `where` 字典的键是列名，值的格式与 `update` 操作的 `where` 子句相同 (字面量, 占位符, 或包含操作符的字典)。
+
+**依赖关系处理 (`depends_on_index` 和 `{{previous_result...}}`)**:
+
+*   如果一个操作（操作 B，索引 `M`）需要用到列表中**先前**某个操作（操作 A，索引 `N`，且 **N < M**）返回的值（通过 `"return_affected"` 指定），则：
+    1.  在操作 B 中添加 `"depends_on_index": N`。 **必须确保 N 小于 M**。
+    2.  在操作 B 的 `values`, `set`, 或 `where` 子句中，使用占位符 `"{{previous_result[N].字段名}}"` 来引用操作 A 返回的值。例如：`{{"user_id": "{{previous_result[0].id}}"}}`。
+
+**示例:**
+
+*   请求："添加用户'bob'，邮箱'bob@a.com'；然后更新该用户的邮箱为'bob@b.com'"
+    ```json
+    [
+      {{
+        "operation": "insert",
+        "table_name": "users",
+        "values": {{ "username": "bob", "email": "bob@a.com", "created_at": "now()", "updated_at": "now()" }},
+        "return_affected": ["id"]
+      }},
+      {{
+        "operation": "update",
+        "table_name": "users",
+        "where": {{ "id": "{{previous_result[0].id}}" }},
+        "set": {{ "email": "bob@b.com", "updated_at": "now()" }},
+        "depends_on_index": 0
+      }}
+    ]
+    ```
+*   请求："为用户'alice'创建一个提示，标题是'周报'，内容是'本周工作总结'，类别是'work'，然后将类别改为'report'。" (假设 Schema 中 users 表有 id, username; prompts 表有 id, user_id, title, content, category)
+    ```json
+    [
+      {{
+        "operation": "insert",
+        "table_name": "prompts",
+        "values": {{
+          "user_id": "{{{{db(SELECT id FROM users WHERE username = 'alice')}}}}",
+          "title": "周报",
+          "content": "本周工作总结",
+          "category": "work",
+          "created_at": "now()",
+          "updated_at": "now()"
+        }},
+        "return_affected": ["id"]
+      }},
+      {{
+        "operation": "update",
+        "table_name": "prompts",
+        "where": {{
+          "id": "{{previous_result[0].id}}"
+        }},
+        "set": {{
+          "category": "report",
+          "updated_at": "now()"
+        }},
+        "depends_on_index": 0
+      }}
+    ]
+    ```
+*   请求："删除用户 ID 为 15 的所有 prompts 记录，然后为 ID 为 15 的用户新增一个 api_token，provider 是 'test'，token_value 是 'abc'。" (假设 prompts.user_id 是外键)
+    ```json
+    [
+      {{
+        "operation": "delete",
+        "table_name": "prompts",
+        "where": {{ "user_id": 15 }}
+      }},
+      {{
+        "operation": "insert",
+        "table_name": "api_tokens",
+        "values": {{ "user_id": 15, "provider": "test", "token_value": "abc", "created_at": "now()", "updated_at": "now()" }}
+      }}
+    ]
+    ```
+*   请求："将所有2024年创建的提示（prompts）的类别改为'Archived'，并删除其中在2024年上半年（1月1日至6月30日）创建且类别为'OldCat'的提示。"
+    ```json
+    [
+      {{
+        "operation": "update",
+        "table_name": "prompts",
+        "where": {{
+          "created_at": {{ ">=": "2024-01-01 00:00:00", "<": "2025-01-01 00:00:00" }}
+        }},
+        "set": {{
+          "category": "Archived",
+          "updated_at": "now()"
+        }}
+      }},
+      {{
+        "operation": "delete",
+        "table_name": "prompts",
+        "where": {{
+          "created_at": {{ ">=": "2024-01-01 00:00:00", "<=": "2024-06-30 23:59:59" }},
+          "category": "OldCat"
+        }}
+      }}
+    ]
+    ```
+*   请求："对于拥有 OpenAI 令牌但没有提示的用户，将他们的邮箱后缀改为 '@no-prompts.com'。"
+    ```json
+    [
+      {{
+        "operation": "update",
+        "table_name": "users",
+        "where": {{
+          "id": {{ "IN": "{{{{db(SELECT t.user_id FROM api_tokens t LEFT JOIN prompts p ON t.user_id = p.user_id WHERE t.provider = 'OpenAI' AND p.id IS NULL GROUP BY t.user_id)}}}}" }}
+        }},
+        "set": {{
+          "email": "CONCAT(SUBSTRING_INDEX(email, '@', 1), '@no-prompts.com')",
+          "updated_at": "now()"
+        }}
+      }}
+    ]
+    ```
+
+请根据上述规则，将以下用户请求转换为操作列表:
+用户请求: {query}
+"""
+# (提示模板的其余部分与llm_composite_service.py中的原内容一致)
+```
+
+### 当前遇到的主要问题
+
+尽管对上述提示模板中的大括号使用进行了多次细致的调整，以期正确处理 LangChain 模板变量、JSON 字面量结构以及自定义的 `{{db(...)}}` 和 `{{previous_result...}}` 占位符，但在测试（例如："对于拥有 OpenAI 令牌但没有提示的用户，将他们的邮箱后缀改为 '@no-prompts.com'..."这样的查询）时，系统日志中仍然出现如下错误：
+
+`错误: 调用 LLM 解析复合请求时发生错误: Single '}' encountered in format string`
+或类似的因 LangChain 无法正确解析模板而导致的错误。
+
+这表明在提示模板中，大括号的层级或转义方式仍然存在与 LangChain 解析机制不兼容的地方，导致其在尝试格式化模板字符串（替换如 `{query}` 等变量）时出错。
+
+核心挑战在于找到一种精确的大括号使用方式，使得：
+1. LangChain 的模板变量 (如 `{query}`) 被正确替换。
+2. 示例 JSON 结构中的字面量 `{` 和 `}` 被正确传递给 LLM。
+3. 我们自定义的、本身包含双大括号的占位符 (如 `{{db(...)}}`) 能够作为字符串值原样出现在 LLM 看到的提示中，并最终被 LLM 正确地包含在其输出的 JSON 字符串的操作计划的值中。
+
+目前的尝试未能完美平衡这三点，导致解析失败。
+
+### 后续方向
+
+明天可以从以下几个方面入手：
+1.  **简化测试用例**：使用最简单的、仅包含一个自定义占位符的JSON示例来测试提示模板，逐步隔离问题。
+2.  **查阅 LangChain 文档**：再次仔细查阅 LangChain 关于提示模板中特殊字符（尤其是大括号）转义的官方文档和示例。
+3.  **逐步构建**：不直接使用复杂的完整提示，而是先构建一个极简的、只包含一层JSON结构和变量的模板，确认其能工作，然后逐步增加嵌套层级和自定义占位符，观察在哪一步出错。
+4.  **考虑替代转义**：如果 LangChain 对多层嵌套大括号的处理确实存在固有困难，可能需要考虑在传递给LLM之前或之后，对我们自定义的占位符采用不同的临时标记方式（例如 `__DB_PLACEHOLDER_START__ ... __DB_PLACEHOLDER_END__`），然后在应用程序代码中进行转换，但这会增加复杂性，作为最后手段考虑。
+
+</rewritten_file> 

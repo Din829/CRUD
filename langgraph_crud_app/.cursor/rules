@@ -42,35 +42,86 @@
 Prompt 模板编写规范
 
 核心规则：
-- 在编写 LangChain Prompt 模板时，必须区分真实变量和示例文本中的大括号。
+- 在 Python f-string 环境下编写 LangChain Prompt 模板时，必须清晰区分三类大括号的用途和写法，以确保 Python f-string 解析和 LangChain 模板解析都能正确工作。
 
-用途：真实需要替换的变量
-写法示例：{user_query} {schema_str}
-说明：使用单大括号，LangChain 会在运行时替换
+三类大括号及其在 Python f-string 中的写法：
 
-用途：示例或固定格式文本
-写法示例：{{"field": "value"}} {{"id": 123}}
-说明：使用双大括号，防止被误解析成变量
+1.  **用途：LangChain 模板变量 (运行时需要被真实值替换)**
+    *   **在 Python f-string 中的写法示例：** `{user_query}`, `{schema_str}`
+    *   **说明：** 在 f-string 中使用单大括号。Python f-string 会保持其原样（因为它不是 f-string 的插值变量）。LangChain 接收到这个字符串后，会将其识别为模板变量并在运行时进行替换。
 
-常见场景示例：
-- JSON 示例: [{{"table": "users", "fields": {{"name": "张三"}}}}]
-- 字段映射示例: {{"原字段": "新字段"}}
-- 配置示例: {{"config": {{"key": "value"}}}}
+2.  **用途：构成 JSON 结构或其他固定格式文本中的字面量大括号 (希望最终展示给 LLM 的是 `{` 和 `}` )**
+    *   **在 Python f-string 中的写法示例：**
+        *   单个对象: `{{{{ "field": "value" }}}}`
+        *   列表中的对象: `[ {{{{ "id": 123 }}}}, {{{{ "name": "张三" }}}} ]`
+    *   **说明：**
+        *   在 f-string 中使用四重大括号 `{{{{` 和 `}}}}` 来包裹整个 JSON 对象或需要字面量大括号的文本片段。
+        *   Python f-string 会将 `{{{{` 解析为 `{{`，将 `}}}}` 解析为 `}}`。
+        *   因此，LangChain 接收到的字符串会是 `{{ "field": "value" }}`。LangChain 会将 `{{` 和 `}}` 解析为字面量的 `{` 和 `}`，从而将正确的 JSON 结构或固定格式文本传递给 LLM。
+        *   **关键点：** 这种方式适用于将整个结构（如一个完整的 JSON 对象示例）作为字面量展示给 LLM 的场景。
+
+3.  **用途：在固定格式文本中内嵌的、本身也使用大括号的特殊占位符或表达式 (希望 LLM 看到并学习模仿这种带括号的占位符，例如 `{{db(...)}}` )**
+    *   **在 Python f-string 中的写法示例：** `语句中包含一个占位符，例如 "{{{{db(SELECT ...)}}}}"。`
+    *   **说明：**
+        *   与第二类类似，在 f-string 中使用四重大括号 `{{{{` 和 `}}}}` 来包裹您自定义的、本身就包含双大括号的占位符字符串。
+        *   Python f-string 将其解析为 `{{db(SELECT ...)}}`。
+        *   LangChain 接收到这个字符串后，会将 `{{` 和 `}}` 解析为字面量的 `{` 和 `}`，因此 LLM 最终看到的提示中会包含您期望的 `{{db(SELECT ...)}}` 文本。
+
+常见场景示例 (在 Python f-string 中)：
+
+*   **完整的 JSON 对象/列表示例** (传递给 LangChain 后，LangChain 将其作为字面量 JSON 结构呈现给 LLM):
+    ```python
+    prompt_template = f"""
+    这是一个用户列表的例子:
+    [{{{{
+        "table": "users",
+        "fields": {{ "name": "张三", "age": {{{{ "_comment": "年龄必须是数字" }}}}, "city": "北京" }}
+    }}}},
+    {{{{
+        "table": "products",
+        "fields": {{ "product_name": "示例商品", "price": 100.50 }}
+    }}}}
+    ]
+    请处理用户请求: {user_query}
+    """
+    ```
+    *   上述 f-string 中，`{{{{ ... }}}}` 包裹了整个 JSON 对象。`{{ "name": "张三" }}` 意味着 f-string 输出 `{{ "name": "张三" }}`，LangChain 看到 `{{` 输出 `{`，所以 LLM 看到 `{ "name": "张三" }`。
+    *   如果 JSON 值本身也需要是字面量大括号（如注释），则需要更多的嵌套，如 `{{{{ "_comment": "年龄必须是数字" }}}}` -> f-string 输出 `{{ "_comment": "年龄必须是数字" }}` -> LangChain 输出 `{ "_comment": "年龄必须是数字" }`。
+
+*   **描述文本中引用自定义占位符** (LLM 看到的是 `{{db(...)}}`):
+    ```python
+    prompt_template = f"""
+    你可以使用 `{{{{db(SELECT column FROM table)}}}}` 来查询数据库。
+    或者使用 `{{{{random(string)}}}}` 来生成随机字符串。
+    用户请求: {user_query}
+    """
+    ```
 
 错误示范：
-错误：
-示例: {"name": "value"}  # LangChain 会误认为需要传入 name 变量
 
-正确：
-示例: {{"name": "value"}}  # LangChain 识别为普通文本
+*   **错误 (在 f-string 中直接使用双大括号表示 JSON 结构):**
+    ```python
+    # 错误示例 (f-string)
+    f'示例: {{ "name": "value" }}' 
+    ```
+    *   **原因：** f-string 会将其解析为 `示例: { "name": "value" }`。如果 LangChain 看到这个，它可能会把 `"name"` 当作一个 LangChain 模板变量，从而导致 `Missing variable` 错误或意外行为。
+
+*   **正确 (在 f-string 中使用四重大括号使 LangChain 看到字面量 JSON):**
+    ```python
+    # 正确示例 (f-string)
+    f'示例: {{{{ "name": "value" }}}}' 
+    ```
+    *   **结果：** f-string 解析为 `示例: {{ "name": "value" }}`。LangChain 解析 `{{` 和 `}}` 为字面量 `{` 和 `}`，因此 LLM 看到的是 `示例: { "name": "value" }`。
 
 快速检查 Checklist：
-- 确认所有需要替换的变量使用单大括号。
-- 确认所有示例和格式说明中的大括号使用双大括号。
-- 特别检查 Prompt 中嵌套的 JSON 示例是否正确转义。
+
+-   确认所有 LangChain **模板变量**在 Python f-string 中使用单大括号 (`{variable}`)。
+-   确认所有希望 LLM 看到的**字面量 JSON 结构** 或 **包含字面量大括号的固定文本** 在 Python f-string 中使用四重大括号 (`{{{{ ... }}}}`) 来包裹对应的文本片段或整个结构。
+-   确认所有希望 LLM 看到的、**本身就包含双大括号的自定义占位符** (如 `{{db(...)}}`) 在 Python f-string 的描述性文本中同样使用四重大括号 (`{{{{placeholder_itself}}}}`) 包裹。
+-   在测试复杂的 Prompt 前，先用简单的 f-string 打印模板字符串，检查第一步 Python f-string 解析后的结果是否符合预期（即 LangChain 模板的输入格式）。然后再测试 LangChain 的解析结果。
 
 提示：
-- 当前时间等系统函数如 now()，无需括号处理。
-- 遇到复杂 JSON 嵌套时，推荐在 Python 端预处理转义后再传入 Prompt。
+
+-   对于非常复杂的、多层嵌套的 JSON 示例，如果手动转义变得困难，可以考虑在 Python 端先构建该 JSON 字符串（例如使用 `json.dumps()`），然后将其作为一个普通的 LangChain 模板变量（在 f-string 中用单大括号）传递给模板。但对于模板内联的示例，正确的花括号转义是必要的。
 
 通过遵循这些规则，我们可以确保项目在迭代过程中保持结构清晰、易于理解和维护。
