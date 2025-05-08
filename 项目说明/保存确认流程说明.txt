@@ -42,6 +42,7 @@
 
 7.  **重置状态 (`reset_after_operation_action` 节点):**
     *   清空本次操作相关的暂存、预览、计划等状态变量 (包括 `combined_operation_plan`, `content_combined`, `lastest_content_production`)。
+    *   **重要说明：** 此处的重置主要针对当前完成的单次操作（如修改、新增、删除、复合）的内部暂存状态，确保这些状态不会影响到下一个*全新的*用户请求的初始阶段。更进一步地，为防止不同独立用户请求之间的最终结果串扰（例如，本次操作的 `final_answer` 错误地作为下一个完全无关请求的答复），图的全局入口节点 (`route_initialization_node`) 会在处理下一个新的用户查询之前，清空诸如 `final_answer` 和 `error_message` 这样的通用反馈状态。
 
 8.  **格式化最终回复 (`format_operation_response_action` 节点):**
     *   调用 LLM 服务 (`llm_flow_control_service.format_api_result`) 根据 `api_call_result` 或 `error_message` 生成最终回复。
@@ -58,4 +59,5 @@
     *   流程结束 (END)。
 
 总结:
-保存确认流程通过两阶段确认（暂存确认 + 最终确认）和状态标记 (`save_content`)，确保了用户意图的准确执行。它结合了路由逻辑、动作节点和 LLM 服务，实现了从用户确认到数据库操作的完整闭环，并包含了必要的错误处理和状态清理。复合流程与其他流程共享此确认框架。
+保存确认流程通过两阶段确认（暂存确认 + 最终确认）和状态标记 (`save_content`)，确保了用户意图的准确执行。它结合了路由逻辑、动作节点和 LLM 服务，实现了从用户确认到数据库操作的完整闭环，并包含了必要的错误处理和针对单次操作内部状态的清理 (`reset_after_operation_action`)。
+**结合图入口节点 (`route_initialization_node`) 对通用反馈状态（如 `final_answer`）的清空机制，整个应用能够有效避免不同用户独立请求之间的信息串扰，保证了用户接收到的最终答复的准确性。**复合流程与其他流程共享此确认框架。

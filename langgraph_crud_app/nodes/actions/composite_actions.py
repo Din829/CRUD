@@ -75,37 +75,35 @@ def _process_value(value: Any): # 移除 cursor 参数，使用全局 api_client
         if db_match:
             subquery = db_match.group(1).strip() # 修改：提取子查询
             try:
-                logger.info(f"Resolving db placeholder '{value}' with query: {subquery}")
+                logger.info(f"解析数据库占位符 '{value}'，查询语句: {subquery}")
                 result_str = api_client.execute_query(subquery)
                 result = json.loads(result_str)
 
                 if isinstance(result, list):
                     if not result:  # 空列表 []
-                        logger.info(f"Subquery '{subquery}' returned an empty list. Resolved to [].")
+                        logger.info(f"数据库子查询 '{subquery}' 返回空列表。占位符解析为 []。")
                         return [] # 返回空列表，由API层处理IN ([])的情况
                     
-                    # 检查是否所有行都只包含一个键值对 (通常是 SELECT id FROM ...)
                     is_list_of_single_kv_dicts = True
                     if not all(isinstance(row, dict) and len(row) == 1 for row in result):
                         is_list_of_single_kv_dicts = False
 
                     if len(result) == 1 and is_list_of_single_kv_dicts: # 单行单列，严格的单值
                         actual_value = list(result[0].values())[0]
-                        logger.info(f"Resolved db placeholder '{value}' (single value) to '{actual_value}'")
+                        logger.info(f"数据库占位符 '{value}' (单值) 解析为 '{actual_value}'")
                         return _process_value(actual_value) # 递归处理以防值本身也是占位符
                     elif is_list_of_single_kv_dicts: # 多行单列 (例如用于 IN 子句)
                         actual_values_list = [list(row.values())[0] for row in result]
-                        logger.info(f"Resolved db placeholder '{value}' (list of values) to {actual_values_list}")
-                        # 对于列表结果，不再递归调用 _process_value，因为期望的是一个纯粹的值列表
+                        logger.info(f"数据库占位符 '{value}' (值列表) 解析为 {actual_values_list}")
                         return actual_values_list 
                     else: # 格式不符合单值或单列列表 (例如返回了多列)
-                        logger.error(f"Subquery '{subquery}' result format is not a single value or a list of single column values. Result: {result}")
+                        logger.error(f"数据库子查询 '{subquery}' 结果格式非单值或单列值列表。结果: {result}")
                         return None # 视为解析失败
                 else: # API 返回的不是列表格式 (理论上不应发生，execute_query 应返回列表或抛异常)
-                    logger.error(f"Subquery '{subquery}' result from API was not a list as expected. Result: {result}")
+                    logger.error(f"数据库子查询 '{subquery}' 来自 API 的结果非预期列表格式。结果: {result}")
                     return None # 视为解析失败
             except Exception as e:
-                logger.error(f"Error executing subquery '{subquery}': {e}")
+                logger.error(f"执行数据库子查询 '{subquery}' 时出错: {e}")
                 return None
 
         # 处理 random 占位符
@@ -120,9 +118,9 @@ def _process_value(value: Any): # 移除 cursor 参数，使用全局 api_client
             elif random_type == 'uuid':
                 random_value = str(uuid.uuid4())
             else:
-                 logger.warning(f"Unsupported random type: {random_type}")
+                 logger.warning(f"不支持的随机类型: {random_type}")
                  return None
-            logger.info(f"Resolved random placeholder '{value}' to '{random_value}'")
+            logger.info(f"随机占位符 '{value}' 解析为 '{random_value}'")
             return random_value
 
     elif isinstance(value, dict):
@@ -138,74 +136,99 @@ def process_composite_placeholders_action(state: GraphState) -> Dict[str, Any]:
     """
     节点动作：处理复合操作计划中的 {{db(...)}} 和 {{random(...)}} 占位符。
     更新 lastest_content_production 状态。
+    新增逻辑：过滤掉因占位符解析导致外键字段值为列表的无效 insert 操作。
     """
     logger.info("---节点: 处理复合操作占位符---")
-    # 使用 lastest_content_production 作为输入和输出，因为它将用于执行
     plan_to_process = state.get("lastest_content_production")
 
     if not plan_to_process:
         logger.warning("用于执行的操作计划为空，无需处理占位符。")
-        return {}
+        return {} # 返回空字典，表示没有更新
 
     if not isinstance(plan_to_process, list):
         logger.error(f"操作计划格式错误 (非列表: {type(plan_to_process)})，无法处理占位符。")
-        # 清除 plan 以阻止后续执行
         return {"error_message": "操作计划状态错误。", "lastest_content_production": None}
 
-    processed_plan = []
-    has_error = False
+    interim_processed_plan: List[Dict[str, Any]] = []
+    has_placeholder_processing_error = False
 
     try:
-        # 注意：这里直接修改传入的列表（来自 state）可能不是最佳实践
-        # 但考虑到 LangGraph 的状态更新机制，这通常是有效的
-        # 如果需要更严格的隔离，应该先深拷贝
         for i, operation in enumerate(plan_to_process):
-            processed_operation = {} # 创建新的字典存储处理后的操作
+            processed_operation = {} 
             for op_key, op_value in operation.items():
                 if op_key in ["values", "set", "where"] and isinstance(op_value, dict):
-                    processed_dict = {} # 创建新的字典存储处理后的字典
+                    processed_dict = {} 
                     for field_key, field_value in op_value.items():
-                         # 对 set 中的值进行特殊处理，避免处理 SQL 表达式
                          should_process = True
-                         if op_key == "set" and isinstance(field_value, str) and ('(' in field_value or '+' in field_value or '-' in field_value):
-                             # 简单的启发式检查，可以改进
-                             logger.debug(f"Skipping placeholder processing for potential SQL expression in set: {field_key}={field_value}")
+                         if op_key == "set" and isinstance(field_value, str) and ('(' in field_value or '+' in field_value or '-' in field_value or re.match(r"^\w+\s*=\s*\w+", field_value)): # 更全面的SQL表达式检查
+                             logger.debug(f"在 'set' 子句中跳过对潜在SQL表达式的占位符处理: {field_key}={field_value}")
                              should_process = False
                          
                          if should_process:
                               processed_val = _process_value(field_value)
-                              if processed_val is None and field_value is not None:
-                                   logger.error(f"处理占位符失败 操作索引 {i}, 字段 '{field_key}': {field_value}")
-                                   has_error = True
-                                   # 可以选择是停止整个处理还是仅标记此字段处理失败
-                                   # 暂时选择继续处理其他字段，但标记全局错误
-                                   processed_dict[field_key] = None # 标记处理失败
+                              if processed_val is None and field_value is not None: # field_value is not None 检查确保我们只标记真正失败的解析
+                                   logger.error(f"处理占位符失败 操作索引 {i}, 表 '{operation.get('table_name', '未知')}', 字段 '{field_key}': 原值 '{field_value}'")
+                                   has_placeholder_processing_error = True
+                                   processed_dict[field_key] = None 
                               else:
                                    processed_dict[field_key] = processed_val
                          else:
-                              processed_dict[field_key] = field_value # 保留未处理的值
+                              processed_dict[field_key] = field_value 
                     processed_operation[op_key] = processed_dict
                 else:
-                     # 复制其他键值对（如 operation, table_name, depends_on_index 等）
                      processed_operation[op_key] = op_value
             
-            processed_plan.append(processed_operation)
-            # 如果在处理当前操作时发生错误，立即停止
-            if has_error:
+            interim_processed_plan.append(processed_operation)
+            if has_placeholder_processing_error:
+                 logger.warning(f"在操作索引 {i} 处检测到占位符处理错误，停止后续操作的占位符处理。")
                  break
-
-        if has_error:
-             logger.error("处理占位符时至少发生一处错误。")
-             # 清除计划以阻止执行
-             return {"error_message": "处理占位符时出错。", "lastest_content_production": None}
-        else:
-             logger.info(f"成功处理占位符，更新后的计划 (用于执行): {processed_plan}")
-             return {"lastest_content_production": processed_plan, "error_message": None}
-
+    
     except Exception as e:
         logger.exception(f"处理复合操作占位符时发生意外错误: {e}")
-        # 清除计划以阻止执行
         return {"error_message": f"处理占位符时系统内部错误: {e}", "lastest_content_production": None}
+
+    if has_placeholder_processing_error:
+         logger.error("由于处理占位符时至少发生一处错误，操作计划可能不完整或无效。")
+         return {"error_message": "处理占位符时出错，部分或全部操作可能无法执行。", "lastest_content_production": None}
+
+    # --- 新增：过滤无效的 INSERT 操作 ---
+    final_executable_plan: List[Dict[str, Any]] = []
+    for op_detail in interim_processed_plan:
+        skip_this_operation = False
+        if op_detail.get("operation") == "insert":
+            values_to_insert = op_detail.get("values")
+            if isinstance(values_to_insert, dict):
+                for field, value in values_to_insert.items():
+                    if isinstance(value, list):
+                        table_name_for_log = op_detail.get('table_name', '未知表')
+                        logger.warning(
+                            f"字段 '{field}' 在表 '{table_name_for_log}' 的插入操作中 "
+                            f"通过占位符处理后解析为一个列表: {value} (类型: {type(value)})。 "
+                            f"假设此字段期望标量值。将跳过此插入操作。"
+                        )
+                        skip_this_operation = True
+                        break # 一个字段是列表就足以跳过此 insert 操作
+        
+        if not skip_this_operation:
+            final_executable_plan.append(op_detail)
+        else:
+            logger.info(f"因字段值为列表而省略的插入操作: {op_detail}")
+    # --- 过滤逻辑结束 ---
+
+    original_plan_count = len(plan_to_process)
+    interim_plan_count = len(interim_processed_plan)
+    final_plan_count = len(final_executable_plan)
+
+    logger.info(
+        f"占位符处理完成。原始计划条数: {original_plan_count}, "
+        f"占位符处理后（错误检查前）条数: {interim_plan_count}, "
+        f"最终可执行计划条数 (过滤后): {final_plan_count}"
+    )
+    if final_plan_count < interim_plan_count :
+        logger.info(f"{interim_plan_count - final_plan_count} 个插入操作因字段值为列表而被省略。")
+
+    logger.debug(f"最终可执行计划 (用于API): {final_executable_plan}")
+    return {"lastest_content_production": final_executable_plan, "error_message": None}
 
 def format_combined_preview_action(state: GraphState) -> Dict[str, Any]:
     """
@@ -216,30 +239,42 @@ def format_combined_preview_action(state: GraphState) -> Dict[str, Any]:
     user_query = state.get("user_query", "")
     # 修改：读取原始计划用于预览，而不是处理后的计划
     combined_plan_for_preview = state.get("combined_operation_plan")
+    # 同时获取处理后的计划，以供LLM参考，了解哪些操作可能不会执行
+    processed_plan_for_context = state.get("lastest_content_production")
 
     if not combined_plan_for_preview:
         logger.warning("原始复合操作计划为空，无法生成预览。")
-        # 如果计划为空，意味着解析失败或无操作
-        # 提供一个明确的无操作反馈可能更好
-        no_op_preview = "未能解析出任何有效的操作。"
-        return {"content_combined": no_op_preview}
+        no_op_preview = "未能解析出任何有效的操作，或所有解析出的操作都因数据问题而无法执行。"
+        # 即使原始计划为空，也要确保 lastest_content_production 也被清空或设为[]
+        # parse_combined_request_action 在 plan 为空时返回 lastest_content_production: None
+        # 如果 process_composite_placeholders_action 因 plan_to_process 为空而提前返回 {}，
+        # 那么 lastest_content_production 可能还是旧值，这里确保它是空列表
+        if state.get("lastest_content_production") is not None and not state.get("lastest_content_production"): #  is not None but empty
+             pass # it's already an empty list or similar, good.
+        elif not state.get("lastest_content_production"): # it is None or truly empty
+             pass # good
+        else: # It has content that might be stale if combined_plan_for_preview is empty
+             logger.info("原始计划为空，但处理后计划非空，可能不一致，预览时通知用户无操作。")
+
+        return {"content_combined": no_op_preview, "lastest_content_production": state.get("lastest_content_production") if combined_plan_for_preview else []}
 
     if not isinstance(combined_plan_for_preview, list):
         logger.error(f"原始复合操作计划格式错误 (非列表: {type(combined_plan_for_preview)})，无法生成预览。")
         return {"error_message": "复合操作计划状态错误，无法生成预览。", "content_combined": None}
 
     try:
+        # LLM 现在可以同时拿到原始计划（主要用于措辞）和实际执行计划（用于准确性）
         preview_text = llm_composite_service.format_combined_preview(
             user_query=user_query,
-            combined_operation_plan=combined_plan_for_preview # 使用原始计划
+            combined_operation_plan=combined_plan_for_preview, # 原始计划，带占位符
+            # 可选：传递处理后的计划，让LLM知道哪些操作可能被省略
+            # actual_executable_plan=processed_plan_for_context
         )
         logger.info(f"生成复合操作预览文本: {preview_text}")
-        # 清除错误消息，因为预览成功了
         return {"content_combined": preview_text, "error_message": None}
 
     except Exception as e:
         logger.exception(f"调用 LLM 格式化复合预览时发生错误: {e}")
-        # 格式化预览失败也设置错误，但保留 content_combined 作为回退
         plan_str_fallback = json.dumps(combined_plan_for_preview, ensure_ascii=False, indent=2)
-        fallback_preview = f"无法生成清晰的预览。将尝试执行以下操作计划（占位符未处理），请谨慎确认：\n{plan_str_fallback}"
+        fallback_preview = f"无法生成清晰的预览。将尝试执行以下原始操作计划（占位符未处理，部分操作可能因数据无效而跳过），请谨慎确认：\\n{plan_str_fallback}"
         return {"error_message": f"生成复合预览时出错: {e}", "content_combined": fallback_preview} 

@@ -2,7 +2,9 @@
 在 LangGraph 初始化流程成功准备好数据库元数据后，根据用户的输入 (`query`) 判断其主要意图，并将流程引导至相应的处理分支。
 
 入口:
-当初始化流程成功完成（`fetch_sample_data` 节点执行完毕）或检测到元数据已存在（`_get_initialization_route` 返回 `"continue_to_main_flow"`）时，流程进入主意图分类节点。
+当初始化流程成功完成（`fetch_sample_data` 节点执行完毕）或检测到元数据已存在（`_get_initialization_route` 返回 `"continue_to_main_flow"`）时，流程进入图的入口节点 `route_initialization_node`。
+**此入口节点除了检查初始化状态外，还会清空如 `final_answer`、`error_message` 等上一轮用户交互可能产生的通用反馈状态，确保后续的主意图分类和处理流程在一个干净的状态背景下开始，避免了不同独立用户请求间的状态污染。**
+随后，流程（通过条件边）进入主意图分类节点 `classify_main_intent_node`。
 
 流程步骤:
 

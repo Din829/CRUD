@@ -1,0 +1,20 @@
+﻿id,user_id,title,content,category,created_at,updated_at
+9,9,UX Feedback,Suggest improvements for a signup form.,design,2025-04-30 22:03:35,2025-04-30 22:03:35
+11,17,Inspire Me,Give me a motivational quote for today.,motivation,2025-05-02 00:01:39,2025-05-02 00:01:39
+21,2,代码审查,审查我的JavaScript代码,debugging,2025-05-03 23:24:01,2025-05-03 23:24:01
+22,29,故事大纲,起草一个奇幻故事大纲,storytelling,2025-05-03 23:25:33,2025-05-03 23:25:33
+23,30,故事大纲2号,起草一个奇幻故事大纲它们家,storytelling,2025-05-03 23:31:44,2025-05-03 23:31:44
+24,31,Game Plot,为RPG游戏写剧情,storytelling,2025-05-03 23:34:36,2025-05-03 23:34:36
+25,31,Code Snippet,写一个Python函数,coding,2025-05-03 23:34:36,2025-05-03 23:34:36
+28,33,GraphQL API design,Design a GraphQL schema for a social media platform with queries and mutations.,Archive,2024-11-02 11:00:00,2025-05-06 21:56:31
+29,33,Unit test for Node.js,Write unit tests for a Node.js REST API using Jest.,Archive,2024-11-03 12:00:00,2025-05-06 21:56:31
+30,34,Travel itinerary,"Create a 7-day travel itinerary for Japan, including cultural and food experiences.",Archive,2024-11-06 16:00:00,2025-05-06 21:56:31
+31,34,Packing list,Generate a packing list for a winter trip to Iceland.,Archive,2024-11-07 17:00:00,2025-05-06 21:56:31
+37,37,Color palette,Suggest a color palette for a minimalist website design.,Archive,2024-11-22 13:00:00,2025-05-06 21:56:31
+38,38,Research proposal,Write a proposal for a study on renewable energy storage solutions.,Archive,2024-11-26 15:00:00,2025-05-06 21:56:31
+39,38,Lab safety protocol,Create a safety protocol for handling hazardous chemicals in a lab.,Archive,2024-11-27 10:00:00,2025-05-06 21:56:31
+40,39,Social media campaign,Design a social media campaign for launching a new fitness product.,Archive,2024-12-02 10:00:00,2025-05-06 21:56:31
+41,39,Email newsletter,Write a newsletter template for promoting a Black Friday sale.,Archive,2024-12-03 11:00:00,2025-05-06 21:56:31
+42,40,Photography guide,Create a guide for capturing night sky photography with a DSLR.,Archive,2024-12-06 14:00:00,2025-05-06 21:56:31
+43,41,科幻小说开头,写一个关于太空探险的科幻小说开头,Creative Writing,2025-05-06 21:34:34,2025-05-06 21:34:34
+44,42,算法优化,优化一个排序算法的性能,Coding,2025-05-06 21:41:47,2025-05-06 21:41:47

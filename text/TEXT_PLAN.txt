@@ -1,0 +1,225 @@
+# 项目系统测试计划
+
+**目标：** 全面测试 LangGraph 数据库交互应用的稳定性、功能完整性及用户体验。
+**基础测试数据：** `text/users.csv`, `text/prompts.csv`, `text/api_tokens.csv`
+**前提：** 为确保测试的独立性和可重复性，在每次执行系列测试前（例如，运行 pytest 之前），**必须**通过脚本或手动步骤，将测试数据库恢复到基于 `text/users.csv`, `text/prompts.csv`, `text/api_tokens.csv` 的初始状态。
+
+## 一、单元测试 (Unit Testing) - 后端 API (`app.py`)
+
+**目标：** 验证 Flask API 各端点的健壮性和数据库操作的正确性。
+**建议测试文件创建：** 在项目根目录下创建 `tests/` 文件夹，例如 `tests/test_app_apis.py` (使用 `pytest` 和 Flask Test Client)。
+
+- **[ ] 1. `/get_schema` 端点测试**
+    - **[ ] 1.1.** 成功获取 schema，验证响应状态码 (200) 和返回的 JSON 结构符合预期。
+    - **[ ] 1.2.** 模拟数据库连接失败，验证是否返回适当的错误状态码 (例如 500) 和错误信息。
+
+- **[ ] 2. `/execute_query` 端点测试**
+    - **[ ] 2.1.** 有效的 `SELECT` 查询（单表、多表连接），验证状态码 (200) 和查询结果。
+    - **[ ] 2.2.** `SELECT` 查询返回空结果集，验证状态码 (200) 和返回空列表 `[]`。
+    - **[ ] 2.3.** 无效的 SQL 语法（例如，非 `SELECT` 语句如 `UPDATE`、`DELETE`），验证是否返回禁止操作的错误 (例如 403)。
+    - **[ ] 2.4.** SQL 语法错误 (例如，拼写错误的表名/列名)，验证是否返回数据库层面的错误 (例如 500 及错误详情)。
+    - **[ ] 2.5.** 空查询字符串或只有分号的查询，验证错误处理 (例如 400)。
+    - **[ ] 2.6.** （可选）针对性的 SQL 注入尝试（如 `'; DROP TABLE users; --`），验证参数化是否有效（预期是查询因语法错误而失败，而不是执行恶意代码）。
+
+- **[ ] 3. `/insert_record` 端点测试**
+    - **[ ] 3.1.** 单条记录成功插入，验证状态码 (200)，响应消息，数据库记录是否正确创建，包括 `LAST_INSERT_ID()` 是否正确返回（如果适用）。
+    - **[ ] 3.2.** 批量记录成功插入（多条记录在一次请求中），验证均成功。
+    - **[ ] 3.3.** 插入时违反唯一约束（例如，重复的 email），验证状态码 (例如 400 或 409) 和错误信息，数据未插入。
+    - **[ ] 3.4.** 插入时违反外键约束（例如，`user_id` 在 `users` 表中不存在），验证状态码和错误信息，数据未插入。
+    - **[ ] 3.5.** 插入时缺少必需字段（非 `NULL` 且无默认值的字段），验证错误处理。
+    - **[ ] 3.6.** 插入包含 `NOW()` 函数的日期时间字段，验证数据库中时间是否正确生成。
+    - **[ ] 3.7.** 包含 `{{new(...)}}` 占位符的依赖插入（测试独立记录和依赖记录的正确处理顺序和主键传递）。
+    - **[ ] 3.8.** 插入数据类型不匹配（例如，向数字列插入字符串），验证错误处理。
+    - **[ ] 3.9.** 空记录列表，验证 API 如何响应。
+
+- **[ ] 4. `/update_record` 端点测试**
+    - **[ ] 4.1.** 成功更新单条记录的单个字段，验证状态码 (200)，响应消息，数据库记录是否正确更新。
+    - **[ ] 4.2.** 成功更新单条记录的多个字段。
+    - **[ ] 4.3.** 更新不存在的记录（基于主键），验证响应消息（例如 "Record unchanged" 或 "No record found"）和状态码 (200)。
+    - **[ ] 4.4.** 更新时违反唯一约束（例如，将 email 更新为已存在的 email），验证错误处理。
+    - **[ ] 4.5.** 更新包含 `NOW()` 的字段。
+    - **[ ] 4.6.** 更新时数据类型不匹配。
+    - **[ ] 4.7.** 批量更新操作（一次请求更新多条不同记录或同一表的不同记录）。
+
+- **[ ] 5. `/delete_record` 端点测试**
+    - **[ ] 5.1.** 成功删除存在的记录，验证状态码 (200)，响应消息，数据库记录是否被删除。
+    - **[ ] 5.2.** 删除不存在的记录，验证状态码 (200) 和响应消息（例如 "No record found..."）。
+    - **[ ] 5.3.** （如果有关联删除逻辑，例如级联删除，需要测试）
+
+- **[ ] 6. `/execute_batch_operations` 端点测试**
+    - **[ ] 6.1.** 空操作列表，验证响应。
+    - **[ ] 6.2.** 仅包含 `insert` 操作的批处理。
+    - **[ ] 6.3.** 仅包含 `update` 操作的批处理（包括 `WHERE id IN []` 的情况）。
+    - **[ ] 6.4.** 仅包含 `delete` 操作的批处理。
+    - **[ ] 6.5.** 混合操作（`insert`, `update`, `delete`）的批处理。
+    - **[ ] 6.6.** 依赖关系测试：
+        - **[ ] 6.6.1.** 后续操作依赖前序 `insert` 返回的 `last_insert_id`。
+        - **[ ] 6.6.2.** 后续操作依赖前序 `update` 或 `delete` 的 `return_affected` 返回的单行结果。
+        - **[ ] 6.6.3.** 后续操作依赖前序 `update` 或 `delete` 的 `return_affected` 返回的多行结果（验证操作是否正确展开）。
+    - **[ ] 6.7.** 错误处理与事务回滚：
+        - **[ ] 6.7.1.** 批处理中某个操作失败（例如唯一约束、外键约束、无效数据），验证整个事务是否回滚，之前成功的操作是否也未提交。
+        - **[ ] 6.7.2.** 验证返回的错误信息是否能准确定位到失败的操作索引和原因。
+    - **[ ] 6.8.** `set` 子句中的 SQL 表达式（如 `CONCAT()`, `NOW()`）是否正确执行而不是作为字符串参数。
+    - **[ ] 6.9.** `where` 子句中多种条件操作符（`=`, `>`, `<`, `IN`, `LIKE`, `BETWEEN`）的正确性。
+
+## 二、集成测试 (Integration Testing) - LangGraph 流程与 API
+
+**目标：** 验证 LangGraph 内部逻辑、LLM 服务调用和对后端 API 调用的协同工作。
+**建议测试文件创建：** `tests/test_langgraph_flows.py` (使用 `pytest`，大量使用 `unittest.mock` 来 mock LLM 服务和部分 API 行为)。
+**注意：** 所有流程的集成测试都应始于模拟正确的用户主意图输入，以隐式验证 `classify_main_intent_node` 和 `_route_after_main_intent` 的路由功能。
+
+- **[ ] 1. 初始化流程 (`initialization_router.py`, `preprocessing_actions.py`)**
+    - **[ ] 1.1.** 首次运行：
+        - **[ ] 1.1.1.** Mock API (`/get_schema`, `/execute_query` for samples) 返回成功数据。
+        - **[ ] 1.1.2.** Mock LLM (`extract_table_names`, `format_schema`) 返回成功数据。
+        - **[ ] 1.1.3.** 验证 `GraphState` 中的 `biaojiegou_save`, `table_names`, `data_sample` 被正确填充。
+        - **[ ] 1.1.4.** 验证流程走向 `classify_main_intent_node`。
+    - **[ ] 1.2.** 元数据已存在：
+        - **[ ] 1.2.1.** 预设 `GraphState` 中包含有效的元数据。
+        - **[ ] 1.2.2.** 验证流程直接从 `route_initialization_node` 走向 `classify_main_intent_node`，不调用初始化动作。
+    - **[ ] 1.3.** 错误处理：
+        - **[ ] 1.3.1.** Mock `/get_schema` API 调用失败，验证 `error_message` 被设置，流程走向 `handle_init_error`。
+        - **[ ] 1.3.2.** Mock LLM 服务调用失败，验证错误处理。
+    - **[ ] 1.4.** 状态重置检查：在一次成功的初始化后，发起一个新的简单查询，验证 `route_initialization_node` 是否正确重置了 `final_answer` 和 `error_message` 等，避免了状态污染。
+
+- **[ ] 2. 查询/分析流程 (`query_analysis_router.py`, `query_actions.py`, `llm_query_service.py`)**
+    - **[ ] 2.1.** 简单 `SELECT` 查询：
+        - **[ ] 2.1.1.** Mock `classify_main_intent` -> `query_analysis`, `classify_query_analysis_intent` -> `query`.
+        - **[ ] 2.1.2.** Mock `generate_select_sql` 返回一个有效的 `SELECT` SQL。
+        - **[ ] 2.1.3.** （可选 Mock）`clean_sql_action`。
+        - **[ ] 2.1.4.** （真实API或Mock）`execute_sql_query` 返回成功结果。
+        - **[ ] 2.1.5.** Mock `format_query_result` 返回格式化的文本。
+        - **[ ] 2.1.6.** 验证最终 `final_answer` 符合预期。
+    - **[ ] 2.2.** 分析查询（如 `COUNT(*)`)：类似 2.1，但意图为 `analysis`，验证相关节点。
+    - **[ ] 2.3.** 查询无结果：Mock `execute_sql_query` 返回空列表，验证流程走向 `handle_query_not_found` (或 `handle_analysis_no_data`) 并返回正确的 `final_answer`。
+    - **[ ] 2.4.** SQL 生成失败：Mock `generate_select_sql` (或 `generate_analysis_sql`) 返回错误或请求澄清的提示，验证流程和 `final_answer`。
+    - **[ ] 2.5.** SQL 执行失败：Mock `execute_sql_query` 返回 API 错误，验证流程走向澄清节点和 `final_answer`。
+
+- **[ ] 3. 新增流程 (`add_actions.py`, `llm_add_service.py`, 确认流程部分)**
+    *   **[ ] 3.1.** 简单新增，无占位符：
+        *   **[ ] 3.1.1.** 用户输入 -> `parse_add_request_action` (Mock LLM 返回简单 JSON)。
+        *   **[ ] 3.1.2.** `process_add_llm_output_action` -> `process_placeholders_action` (无占位符，直接通过)。
+        *   **[ ] 3.1.3.** `format_add_preview_action` (Mock LLM 返回预览文本)。
+        *   **[ ] 3.1.4.** `provide_add_feedback_action` -> `final_answer` (预览 + "请保存")。
+        *   **[ ] 3.1.5.** 用户输入 "保存" -> `route_confirmation_entry` -> `stage_add_action` -> `final_answer` ("请回复是/否")。
+        *   **[ ] 3.1.6.** 用户输入 "是" -> `ask_confirm_modify_node` (Mock LLM "yes") -> `execute_operation_action` (调用 `/insert_record` API, 可Mock或真实)。
+        *   **[ ] 3.1.7.** `reset_after_operation_action` -> `format_operation_response_action` (Mock LLM) -> 最终成功 `final_answer`。
+    *   **[ ] 3.2.** 新增，包含 `{{random()}}` 占位符：验证 `process_placeholders_action` 是否正确替换。
+    *   **[ ] 3.3.** 新增，包含 `{{db()}}` 占位符（查询返回单值）：验证 `process_placeholders_action`。
+    *   **[ ] 3.4.** 新增，`{{db()}}` 查询返回空/无效结果：验证 `process_placeholders_action` 如何处理，以及后续是否生成预览/执行。
+    *   **[ ] 3.5.** 用户在确认阶段取消 ("否")：验证流程走向 `cancel_save_action`。
+    *   **[ ] 3.6.** LLM 解析新增请求失败：验证错误处理和用户反馈。
+
+- **[ ] 4. 修改流程 (`modify_actions.py`, `llm_modify_service.py`, 确认流程部分)**
+    *   **[ ] 4.1.** 简单修改单个字段：类似新增流程的完整确认路径。
+        *   `generate_modify_context_sql_action` (Mock LLM 生成上下文 SQL)。
+        *   `execute_modify_context_sql_action` (Mock API 返回上下文数据)。
+        *   `parse_modify_request_action` (Mock LLM 返回修改JSON)。
+        *   `validate_and_store_modification_action`。
+        *   后续确认和执行流程。
+    *   **[ ] 4.2.** 修改涉及基于当前值的计算（依赖上下文）。
+    *   **[ ] 4.3.** LLM 无法生成上下文 SQL 或无法解析修改请求：验证错误和澄清流程。
+    *   **[ ] 4.4.** 明确要求修改主键ID：验证 `check_for_direct_id_modification_intent` (在 `generate_modify_context_sql_action` 内部) 是否能阻止操作并给出正确提示。
+
+- **[ ] 5. 删除流程 (`delete_actions.py`, `llm_delete_service.py`, 确认流程部分)**
+    *   **[ ] 5.1.** 成功删除单条/多条记录：
+        *   `generate_delete_preview_sql_action` (Mock LLM 生成预览 SQL)。
+        *   `clean_delete_sql_action` (验证之前修复的截断误判问题是否还存在)。
+        *   `execute_delete_preview_sql_action` (Mock API 返回待删除记录)。
+        *   `format_delete_preview_action` (Mock LLM 格式化预览)。
+        *   后续确认 (`stage_delete_action`) 和执行 (`execute_operation_action` 调用 `/delete_record`)。
+    *   **[ ] 5.2.** 删除查询无匹配记录：验证是否提示 "未找到记录" 且不进入确认。
+    *   **[ ] 5.3.** LLM 生成预览 SQL 失败。
+
+- **[ ] 6. 复合流程 (`composite_actions.py`, `llm_composite_service.py`, 确认流程部分)**
+    *   **[ ] 6.1.** 包含 update 和 insert，所有占位符都能成功解析：
+        *   `parse_combined_request_action` (Mock LLM 返回带占位符计划)。
+        *   `process_composite_placeholders_action` (验证 `{{db()}}` 和 `{{random()}}` 被正确替换，且没有 `insert` 因值为列表而被过滤)。
+        *   `format_combined_preview_action` (Mock LLM 格式化预览)。
+        *   后续确认和执行 (`execute_operation_action` 调用 `/execute_batch_operations`)。
+    *   **[ ] 6.2.** `{{db()}}` 查询返回空列表，导致某个 `insert` 操作的 `user_id` 解析为 `[]`：
+        *   验证 `process_composite_placeholders_action` 是否正确过滤掉该 `insert` 操作。
+        *   验证发送给 `/execute_batch_operations` 的计划中不包含此无效 `insert`。
+        *   验证最终用户反馈（是否提及部分操作未执行）。
+    *   **[ ] 6.3.** `{{db()}}` 查询返回多个ID，用于 `UPDATE ... WHERE id IN {{db()}}`：验证 `process_composite_placeholders_action` 和 `_process_value` 是否将列表正确传递，并由后端 `/execute_batch_operations` 正确处理 `IN (...)`。
+    *   **[ ] 6.4.** 占位符解析失败：验证 `process_composite_placeholders_action` 的错误处理。
+    *   **[ ] 6.5.** LLM 解析复合请求失败。
+
+- **[ ] 7. 重置流程 (`flow_control_actions.py`)**
+    *   **[ ] 7.1.** 在一个操作（如修改）被暂存后 (`save_content` 有值），用户输入 "重置"。
+    *   **[ ] 7.2.** 验证 `handle_reset_action` 是否清空了 `save_content`, `content_modify` 等相关状态。
+    *   **[ ] 7.3.** 验证 `final_answer` 为 "之前的检索状态已重置。"
+
+## 三、端到端测试 (End-to-End Testing) - 模拟真实用户
+
+**目标：** 从用户自然语言输入到最终系统答复，验证完整交互流程。
+**建议：** 定义一个场景列表，包含输入序列和预期的 `final_answer`。手动执行或脚本化 `main.py`。
+
+- **[ ] 1. 场景：简单查询与确认**
+    *   用户: "查找所有叫Alice的用户" -> 预期: 显示Alice的信息。
+    *   用户: "她的邮箱是什么？" (测试上下文保持，如果LLM Prompt支持) -> 预期: 显示Alice的邮箱。
+
+- **[ ] 2. 场景：修改后确认执行**
+    *   用户: "把用户id为4的邮箱改成 diana.superhero@no-prompts.com" -> 预期: 预览修改。
+    *   用户: "保存" -> 预期: 请求最终确认。
+    *   用户: "是" -> 预期: 成功修改的提示。
+    *   后续查询验证数据是否真的被修改。
+
+- **[ ] 3. 场景：新增后确认执行**
+    *   用户: "帮我添加一个新用户，用户名是testuser，邮箱是test@example.com，密码是testpass" -> 预期: 预览新增。
+    *   用户: "保存" -> "是" -> 预期: 成功新增提示。
+
+- **[ ] 4. 场景：删除后确认执行**
+    *   用户: "删除用户ian的所有api令牌" -> 预期: 预览待删除的令牌。
+    *   用户: "保存" -> "是" -> 预期: 成功删除提示。
+
+- **[ ] 5. 场景：复合操作 - 占位符成功解析**
+    *   用户: "找到所有提供商是Grok的api_tokens，将对应用户的邮箱后缀改为@grok-users.com，并为这些用户添加一个标题为'Grok User'的prompt" -> 预期: 预览，确认，执行。
+    *   验证数据库，用户邮箱是否更改，新的prompt是否添加。
+
+- **[ ] 6. 场景：复合操作 - `{{db()}}` 返回空导致部分操作跳过**
+    *   用户: (构造一个 `{{db()}}` 查询，使其肯定返回空，例如 "查找所有用户名为'不存在的用户ABCXYZ'的ID") "将这些用户的邮箱改为@skipped.com，并为他们添加prompt 'skipped_prompt'" -> 预期: 预览（理想情况能提示部分操作不会执行），确认，执行。
+    *   最终反馈应表明操作成功，但没有记录被影响（或提及部分操作被跳过）。
+
+- **[ ] 7. 场景：用户取消操作**
+    *   用户: "修改id 6的邮箱为 new@fiona.com" -> 预览。
+    *   用户: "保存" -> 请求最终确认。
+    *   用户: "否" -> 预期: 操作取消的提示，数据未改变。
+
+- **[ ] 8. 场景：连续不同操作，验证状态隔离**
+    *   用户: (执行一个成功的查询)
+    *   用户: (紧接着执行一个会导致错误的修改操作，例如修改不存在的用户) -> 预期: 显示修改操作的错误，而不是之前查询的成功结果。 (验证我们修复的 `final_answer` 串扰问题)
+
+- **[ ] 9. 场景：模糊输入/请求澄清**
+    *   用户: "更新一下" -> 预期: 系统应请求用户提供更多信息。
+
+## 四、LLM 输出质量评估 (持续进行)
+
+**目标：** 评估和优化 LLM 在各个环节的输出。
+**建议：** 创建一个评估表格/文档，记录输入、LLM实际输出、期望输出、问题点评级。
+
+- **[ ] 1. 意图识别**
+    *   收集各种可能的用户表达方式，测试主意图和子意图分类的准确性。
+    *   包括一些边界情况和略有歧义的表达。
+
+- **[ ] 2. SQL 生成**
+    *   针对不同的查询/修改/删除意图，检查生成的SQL是否：
+        *   语法正确。
+        *   逻辑符合用户意图。
+        *   （如果可能）相对高效。
+        *   能处理用户意图中的复杂条件。
+
+- **[ ] 3. 文本格式化与生成**
+    *   预览文本（新增、修改、删除、复合）：是否清晰、准确、易于用户理解？
+    *   最终答复（成功、失败、无数据、需澄清）：是否自然、友好、提供了足够的信息？
+    *   错误提示：当流程出错时，LLM生成的解释或请求是否恰当？
+
+- **[ ] 4. 占位符解析的鲁棒性**
+    *   LLM `parse_combined_request_action` 和 `parse_add_request_action` 生成的带占位符的 JSON 是否总是格式良好，占位符使用是否规范。
+
+- **[ ] 5. 特定 Prompt 验证**：针对流程说明文档中提及的特定 Prompt 设计（例如，修改流程中处理多表关联并返回固定格式的 Prompt），设计输入以验证其是否达到预期目标。
+
+---
+**测试执行与记录：**
+- 对每个测试用例，记录：测试ID、描述、前置条件、输入步骤、预期结果、实际结果、是否通过、备注。
+- 发现的 Bug 应记录到 `bug/问题.txt` 或专门的 Bug 跟踪系统。
