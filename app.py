@@ -810,44 +810,44 @@ def execute_batch_operations():
                             raise ValueError(f"Op {index}: Dependency result not found for index {depends_on_index}")
 
                         # --- 函数：递归替换占位符 (现在接受单个结果项) ---
-                        def replace_placeholders_recursive(item, single_dep_result, current_op_index):
+                        def replace_placeholders_recursive(item, single_dep_result, current_op_index, effective_depends_on_index_for_regex):
                             if isinstance(item, dict):
-                                return {k: replace_placeholders_recursive(v, single_dep_result, current_op_index) for k, v in item.items()}
+                                return {k: replace_placeholders_recursive(v, single_dep_result, current_op_index, effective_depends_on_index_for_regex) for k, v in item.items()}
                             elif isinstance(item, list):
-                                return [replace_placeholders_recursive(elem, single_dep_result, current_op_index) for elem in item]
+                                return [replace_placeholders_recursive(elem, single_dep_result, current_op_index, effective_depends_on_index_for_regex) for elem in item]
                             elif isinstance(item, str):
-                                match = re.match(r"\{\{previous_result\[(\d+)\]\.(\w+)\}\}", item)
-                                if match:
-                                    dep_idx_str, field_name = match.groups()
+                                def repl_func(match_obj):
+                                    dep_idx_str = match_obj.group(1)
+                                    field_name = match_obj.group(2)
                                     dep_idx = int(dep_idx_str)
-                                    if dep_idx == depends_on_index:
+                                    
+                                    if dep_idx == effective_depends_on_index_for_regex:
                                         if isinstance(single_dep_result, dict) and field_name in single_dep_result:
                                             replaced_value = single_dep_result[field_name]
-                                            app.logger.info(f"Op {current_op_index}: Replaced '{item}' with '{replaced_value}' from op {depends_on_index}")
-                                            return replaced_value
+                                            return str(replaced_value) 
                                         else:
-                                            raise ValueError(f"Op {current_op_index}: Field '{field_name}' not found in single dependency result: {single_dep_result}")
+                                            raise ValueError(f"Op {current_op_index} (re.sub): Field '{field_name}' not found for dep_idx {dep_idx} in '{item}'. Available in dependency: {single_dep_result}")
                                     else:
-                                        raise ValueError(f"Op {current_op_index}: Placeholder index {dep_idx} != depends_on_index {depends_on_index}")
-                                return item
+                                        raise ValueError(f"Op {current_op_index} (re.sub): Placeholder index {dep_idx} mismatch in '{item}'. Expected {effective_depends_on_index_for_regex}.")
+
+                                processed_item = re.sub(r"\{\{previous_result\[(\d+)\]\.(\w+)\}\}", repl_func, item)
+                                return processed_item
                             else:
                                 return item
                         # --- END 函数定义 ---
                         
                         # --- 检查依赖结果是否是列表 (多行) ---
                         if isinstance(base_dependent_result, list):
-                            app.logger.info(f"Op {index}: Dependency result from op {depends_on_index} is a list (count: {len(base_dependent_result)}). Expanding execution.")
                             execute_this_op = False # 原始操作不再执行，将被展开的操作替代
-                            dependent_result_list = base_dependent_result # 保存列表以供循环
+                            dependent_result_list = base_dependent_result
                         else:
                             # 单行结果或非预期格式，按单次执行处理
-                            # 解析占位符 (针对单个结果)
-                            op['values'] = replace_placeholders_recursive(op.get('values'), base_dependent_result, index) if op.get('operation') == 'insert' else op.get('values')
+                            op['values'] = replace_placeholders_recursive(op.get('values'), base_dependent_result, index, depends_on_index) if op.get('operation') == 'insert' else op.get('values')
                             if op.get('operation') == 'update':
-                                op['set'] = replace_placeholders_recursive(op.get('set'), base_dependent_result, index)
-                                op['where'] = replace_placeholders_recursive(op.get('where'), base_dependent_result, index)
+                                op['set'] = replace_placeholders_recursive(op.get('set'), base_dependent_result, index, depends_on_index)
+                                op['where'] = replace_placeholders_recursive(op.get('where'), base_dependent_result, index, depends_on_index)
                             elif op.get('operation') == 'delete':
-                                op['where'] = replace_placeholders_recursive(op.get('where'), base_dependent_result, index)
+                                op['where'] = replace_placeholders_recursive(op.get('where'), base_dependent_result, index, depends_on_index)
                             app.logger.debug(f"Op {index}: Operation after single dependency resolution: {op}")
                     
                     # --- 执行操作 (可能是单个，也可能是展开后的多个) ---
@@ -916,7 +916,7 @@ def execute_batch_operations():
                                 if c not in op_schema: app.logger.warning(f"Op {current_index}: Update WHERE col '{c}' not in schema, skipping."); continue
                                 if isinstance(cond, dict):
                                     for opk, opv in cond.items():
-                                        sop = opk.upper().strip(); sop_list = [">", "<", ">=", "<=", "LIKE", "IN", "NOT IN", "BETWEEN", "="]
+                                        sop = opk.upper().strip(); sop_list = [">", "<", ">=", "<=", "LIKE", "NOT LIKE", "IN", "NOT IN", "BETWEEN", "="]
                                         if sop not in sop_list: raise ValueError(f"Op {current_index}: Unsupported operator '{sop}'")
                                         if sop in ["IN", "NOT IN"]:
                                             if not isinstance(opv, list): raise ValueError(f"Op {current_index}: Value for {sop} must be list.")
@@ -939,7 +939,7 @@ def execute_batch_operations():
                                 if c not in op_schema: app.logger.warning(f"Op {current_index}: Delete WHERE col '{c}' not in schema, skipping."); continue
                                 if isinstance(cond, dict):
                                     for opk, opv in cond.items():
-                                        sop = opk.upper().strip(); sop_list = [">", "<", ">=", "<=", "LIKE", "IN", "NOT IN", "BETWEEN", "="]
+                                        sop = opk.upper().strip(); sop_list = [">", "<", ">=", "<=", "LIKE", "NOT LIKE", "IN", "NOT IN", "BETWEEN", "="]
                                         if sop not in sop_list: raise ValueError(f"Op {current_index}: Unsupported operator '{sop}'")
                                         if sop in ["IN", "NOT IN"]:
                                             if not isinstance(opv, list): raise ValueError(f"Op {current_index}: Value for {sop} must be list.")
@@ -1009,6 +1009,7 @@ def execute_batch_operations():
                                 "success": True,
                                 "affected_rows": _affected_rows,
                                 "last_insert_id": _last_insert_id if op_type == "insert" else None,
+                                "affected_data": _current_op_result if _current_op_result else [] # 添加到 step_result
                             },
                             "returned_data": _current_op_result # 可能是 dict 或 list of dicts
                         }
@@ -1025,12 +1026,12 @@ def execute_batch_operations():
                         for item_idx, item_res in enumerate(dependent_result_list):
                             op_copy = copy.deepcopy(op) # 为每次展开创建副本
                             # 解析占位符 (使用当前 item_res)
-                            op_copy['values'] = replace_placeholders_recursive(op_copy.get('values'), item_res, index) if op_copy.get('operation') == 'insert' else op_copy.get('values')
+                            op_copy['values'] = replace_placeholders_recursive(op_copy.get('values'), item_res, index, depends_on_index) if op_copy.get('operation') == 'insert' else op_copy.get('values')
                             if op_copy.get('operation') == 'update':
-                                op_copy['set'] = replace_placeholders_recursive(op_copy.get('set'), item_res, index)
-                                op_copy['where'] = replace_placeholders_recursive(op_copy.get('where'), item_res, index)
+                                op_copy['set'] = replace_placeholders_recursive(op_copy.get('set'), item_res, index, depends_on_index)
+                                op_copy['where'] = replace_placeholders_recursive(op_copy.get('where'), item_res, index, depends_on_index)
                             elif op_copy.get('operation') == 'delete':
-                                op_copy['where'] = replace_placeholders_recursive(op_copy.get('where'), item_res, index)
+                                op_copy['where'] = replace_placeholders_recursive(op_copy.get('where'), item_res, index, depends_on_index)
                             app.logger.debug(f"Op {index} (Expanded {item_idx+1}): Executing with resolved data {op_copy}")
                             
                             # 执行展开后的单个操作
