@@ -595,14 +595,15 @@ def insert_record():
 
 @app.route('/get_schema', methods=['GET'])
 def get_schema():
-    with get_db_connection() as connection:
-        try:
+    try:
+        with get_db_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SHOW TABLES")
-                tables = [row[f"Tables_in_{connection.db.decode()}"] for row in cursor.fetchall()]
+                db_name = connection.db.decode() if isinstance(connection.db, bytes) else connection.db
+                tables = [row[f"Tables_in_{db_name}"] for row in cursor.fetchall()]
                 schema = {}
                 for table in tables:
-                    cursor.execute(f"DESCRIBE {table}")
+                    cursor.execute(f"DESCRIBE `{table}`")
                     schema[table] = {
                         "fields": {
                             field["Field"]: {
@@ -614,11 +615,14 @@ def get_schema():
                         },
                         "foreign_keys": {}
                     }
-                app.logger.debug(f"Schema retrieved: {schema}")
+                app.logger.debug(f"Schema retrieved for {db_name}: {len(schema)} tables")
                 return jsonify({"result": [json.dumps(schema, ensure_ascii=False)]})
-        except Exception as e:
-            app.logger.error(f"Error fetching schema: {str(e)}")
-            return jsonify({"error": str(e)}), 500
+    except pymysql.err.OperationalError as e:
+        app.logger.error(f"Database connection error in /get_schema: {str(e)}")
+        return jsonify({"error": f"Database connection failed: {str(e)}"}), 500
+    except Exception as e:
+        app.logger.error(f"Error fetching schema: {str(e)}")
+        return jsonify({"error": f"An unexpected error occurred while fetching schema: {str(e)}"}), 500
 
 
 
