@@ -39,13 +39,13 @@ def test_execute_query_success_select_single_table(client):
     """
     # 假设 'users' 表存在且至少有一条记录
     response = client.post('/execute_query', json={'sql_query': 'SELECT id, username FROM users LIMIT 1;'})
-    assert response.status_code == 200
-    data = json.loads(response.data)
-    assert isinstance(data, list)
+    assert response.status_code == 200 # 检查响应状态码是否为 200
+    data = json.loads(response.data) # 将响应数据转换为 JSON 对象
+    assert isinstance(data, list), "返回的数据不是列表类型" # 检查 data 是否为列表
     assert len(data) >= 0 # 可以是0或更多，取决于表内容
     if len(data) > 0:
-        assert 'id' in data[0]
-        assert 'username' in data[0]
+        assert 'id' in data[0], "返回的数据中缺少 'id' 字段" # 检查 data[0] 中是否存在 'id' 键
+        assert 'username' in data[0], "返回的数据中缺少 'username' 字段" # 检查 data[0] 中是否存在 'username' 键
 
 def test_execute_query_success_select_multi_table_join(client):
     """
@@ -62,13 +62,13 @@ def test_execute_query_success_select_multi_table_join(client):
     LIMIT 1;
     """
     response = client.post('/execute_query', json={'sql_query': query})
-    assert response.status_code == 200
-    data = json.loads(response.data)
-    assert isinstance(data, list)
+    assert response.status_code == 200 # 检查响应状态码是否为 200
+    data = json.loads(response.data) # 将响应数据转换为 JSON 对象
+    assert isinstance(data, list), "返回的数据不是列表类型" # 检查 data 是否为列表
     if len(data) > 0:
-        assert 'prompt_id' in data[0]
-        assert 'title' in data[0]
-        assert 'username' in data[0]
+        assert 'prompt_id' in data[0], "返回的数据中缺少 'prompt_id' 字段" # 检查 data[0] 中是否存在 'prompt_id' 键
+        assert 'title' in data[0], "返回的数据中缺少 'title' 字段" # 检查 data[0] 中是否存在 'title' 键
+        assert 'username' in data[0], "返回的数据中缺少 'username' 字段" # 检查 data[0] 中是否存在 'username' 键
 
 def test_execute_query_select_empty_result(client):
     """
@@ -77,10 +77,10 @@ def test_execute_query_select_empty_result(client):
     """
     # 使用一个几乎肯定不会返回结果的查询条件
     response = client.post('/execute_query', json={'sql_query': "SELECT * FROM users WHERE username = 'THIS_USER_SHOULD_NOT_EXIST_IN_TEST_DB_12345';"})
-    assert response.status_code == 200
-    data = json.loads(response.data)
-    assert isinstance(data, list)
-    assert len(data) == 0
+    assert response.status_code == 200 # 检查响应状态码是否为 200
+    data = json.loads(response.data) # 将响应数据转换为 JSON 对象
+    assert isinstance(data, list), "返回的数据不是列表类型" # 检查 data 是否为列表
+    assert len(data) == 0, "返回的数据列表不为空" # 检查 data 的长度是否为 0
 
 def test_execute_query_non_select_statement_forbidden(client):
     """
@@ -94,10 +94,10 @@ def test_execute_query_non_select_statement_forbidden(client):
     ]
     for query in non_select_queries:
         response = client.post('/execute_query', json={'sql_query': query})
-        assert response.status_code == 403 # app.py 中定义的只允许 SELECT
-        data = json.loads(response.data)
-        assert 'error' in data
-        assert "Only SELECT queries are allowed" in data['error']
+        assert response.status_code == 403, "非 SELECT 语句应该被禁止" # app.py 中定义的只允许 SELECT
+        data = json.loads(response.data) # 将响应数据转换为 JSON 对象   
+        assert 'error' in data, "返回的数据中缺少错误信息" # 检查 JSON 对象中是否存在 'error' 键
+        assert "Only SELECT queries are allowed" in data['error'], "错误消息不包含预期的提示文本" # 检查错误消息是否包含 "Only SELECT queries are allowed"
 
 def test_execute_query_sql_syntax_error(client):
     """
@@ -112,16 +112,16 @@ def test_execute_query_sql_syntax_error(client):
     ]
     for query in error_queries:
         response = client.post('/execute_query', json={'sql_query': query})
-        assert response.status_code == 500 # 期望数据库错误导致 500
-        data = json.loads(response.data)
-        assert 'error' in data
+        assert response.status_code == 500, "SQL语法错误应该返回500状态码" # 期望数据库错误导致 500
+        data = json.loads(response.data) # 将响应数据转换为 JSON 对象
+        assert 'error' in data, "返回的数据中缺少错误信息" # 检查 JSON 对象中是否存在 'error' 键
         # 错误信息可能包含 "1064" (MySQL语法错误) 或 "1146" (表不存在) 或 "1054" (未知列)
         # e.g., data['error'] might be a tuple like [1146, "Table 'your_db.userz' doesn't exist"]
         #       or [1054, "Unknown column 'idd' in 'field list'"]
         # 我们只检查它是一个列表或元组（因为 app.py 中 e.args 被返回）
-        assert isinstance(data['error'], (list, tuple)) 
+        assert isinstance(data['error'], (list, tuple)), "错误信息格式不正确，应为列表或元组" 
         # 并且包含至少一个元素
-        assert len(data['error']) > 0 
+        assert len(data['error']) > 0, "错误信息为空" 
 
 
 def test_execute_query_empty_or_semicolon_only(client):
@@ -138,11 +138,11 @@ def test_execute_query_empty_or_semicolon_only(client):
     ]
     for query in empty_queries:
         response = client.post('/execute_query', json={'sql_query': query})
-        assert response.status_code == 400
-        data = json.loads(response.data)
-        assert 'error' in data
+        assert response.status_code == 400, "空查询应该返回400状态码" # 检查响应状态码是否为 400   
+        data = json.loads(response.data) # 将响应数据转换为 JSON 对象
+        assert 'error' in data, "返回的数据中缺少错误信息" # 检查 JSON 对象中是否存在 'error' 键
         # 错误消息可能是 "No SQL query provided" 或 "Empty SQL query after processing"
-        assert "query provided" in data['error'] or "query after processing" in data['error']
+        assert "query provided" in data['error'] or "query after processing" in data['error'], "错误消息不包含预期的提示文本" # 检查错误消息是否包含 "query provided" 或 "query after processing"
 
 def test_execute_query_sql_injection_attempt_basic_select_only(client):
     """
@@ -176,31 +176,33 @@ def test_execute_query_sql_injection_attempt_basic_select_only(client):
     if response_suffix.status_code == 200:
         # SELECT 部分可能成功了
         data_suffix = json.loads(response_suffix.data)
-        assert isinstance(data_suffix, list) # 确认是 SELECT 的结果
+        assert isinstance(data_suffix, list), "返回的数据不是列表类型" # 确认是 SELECT 的结果
     elif response_suffix.status_code == 500:
         # 可能是数据库层面的错误，比如 "Commands out of sync" 或多语句被禁止
         data_suffix = json.loads(response_suffix.data)
-        assert 'error' in data_suffix
+        assert 'error' in data_suffix, "返回的数据中缺少错误信息" # 检查 JSON 对象中是否存在 'error' 键
         # 错误应该是一个元组或列表，第一个元素是错误代码
+        # 检查 data_suffix['error'] 是否为列表或元组
         assert isinstance(data_suffix['error'], (list, tuple)), \
-            f"Expected error to be a list or tuple, got {type(data_suffix['error'])}"
+            f"错误信息格式不正确，期望为列表或元组，实际为 {type(data_suffix['error'])}"
+        # 检查 data_suffix['error'] 至少有2个元素
         assert len(data_suffix['error']) >= 2, \
-            f"Expected error to have at least 2 elements, got {len(data_suffix['error'])}"
-        
+            f"错误信息元素不足，期望至少2个元素，实际有 {len(data_suffix['error'])} 个"
+        # 获取错误代码和消息
         error_code = data_suffix['error'][0]
         error_message = str(data_suffix['error'][1]).upper()
 
         # 我们期望一个语法错误 (1064) 因为整个多语句被视为一个非法语句
-        assert error_code == 1064, f"Expected error code 1064, got {error_code}"
+        assert error_code == 1064, f"错误代码不正确，期望为1064，实际为 {error_code}"
         # 语法错误消息应该会提到它在哪里卡住了，即 'DROP TABLE USERS'
         assert "DROP TABLE" in error_message, \
-            f"Expected 'DROP TABLE' in error message, got '{error_message}'"
+            f"错误消息中缺少 'DROP TABLE'，实际消息为 '{error_message}'"
         assert "NEAR 'DROP TABLE USERS'" in error_message, \
-            f"Expected error message to specify near 'DROP TABLE USERS', got '{error_message}'"
+            f"错误消息中缺少 'NEAR DROP TABLE USERS'，实际消息为 '{error_message}'"
     else:
         # 如果是 403，说明 SELECT 检查逻辑可能更严格地处理了这种情况
         # 这对于当前 app.py 的 SELECT startswith 检查逻辑来说不太可能，因为查询确实以 SELECT 开头
-        pytest.fail(f"Unexpected status code {response_suffix.status_code}. Expected 200 or 500.")
+        pytest.fail(f"意外的状态码 {response_suffix.status_code}。期望为 200 或 500。")
 
     # 再次查询 users 表以确认其存在，这是一个很好的验证方法，
     # 但它依赖于测试数据库在测试之间不会被其他测试意外修改。
@@ -208,14 +210,14 @@ def test_execute_query_sql_injection_attempt_basic_select_only(client):
     # 或者以预期的错误方式失败（500语法错误），那么表结构是安全的。
     verify_users_table_exists = client.post('/execute_query', json={'sql_query': 'SELECT COUNT(*) FROM users;'})
     assert verify_users_table_exists.status_code == 200, \
-        "Failed to query users table after injection attempt, it might have been dropped or access lost."
+        "注入测试后无法查询users表，表可能已被删除或访问权限丢失"
 
     # 2. 尝试注释掉部分查询
     injection_query_comment = "SELECT id FROM users WHERE username = 'admin' -- ' OR 1=1;"
     # 预期: -- 后面的内容被视为注释，查询会变成 "SELECT id FROM users WHERE username = 'admin'"
     response_comment = client.post('/execute_query', json={'sql_query': injection_query_comment})
     assert response_comment.status_code == 200, \
-        f"Expected status 200 for commented query, got {response_comment.status_code}. Error: {response_comment.data.decode() if response_comment.status_code != 200 else ''}"
+        f"带注释的查询应返回状态码200，实际返回 {response_comment.status_code}。错误信息：{response_comment.data.decode() if response_comment.status_code != 200 else ''}"
     # 可选：进一步验证返回的数据是否符合预期，例如只返回 'admin' 用户的数据（如果存在）
     # data_comment = json.loads(response_comment.data)
     # if 'admin_user_exists_in_test_db': # 这个需要根据实际测试数据来判断

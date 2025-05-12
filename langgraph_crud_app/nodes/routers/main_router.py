@@ -11,15 +11,22 @@ def classify_main_intent_node(state: GraphState) -> Dict[str, Any]:
     路由节点：调用 LLM 服务对用户查询进行主意图分类。
     """
     print("---路由节点: 主意图分类---")
-    query = state.get("user_query", "")
-    if not query:
+    user_query = state.get("user_query", "")
+    # biaojiegou_save = state.get("biaojiegou_save") # llm_query_service.classify_main_intent 目前不使用这些
+    # table_names = state.get("table_names")       # llm_query_service.classify_main_intent 目前不使用这些
+
+    if not user_query:
         print("警告: 在主意图分类节点未获取到 user_query。")
-        # 可以直接返回错误或路由到特定处理
-        # 暂时按原逻辑继续，但 LLM 输入会是空
         return {"main_intent": "confirm_other", "error_message": "未获取到有效的用户查询"}
 
+    # # 确保必要的元数据存在才进行分类 - llm_query_service.classify_main_intent 目前不使用这些
+    # if not biaojiegou_save or not table_names:
+    #     error_msg = "主意图分类失败: 缺少必要的数据库Schema或表名信息。"
+    #     print(error_msg)
+    #     return {"main_intent": "confirm_other", "error_message": error_msg}
+
     try:
-        intent = llm_query_service.classify_main_intent(query)
+        intent = llm_query_service.classify_main_intent(user_query) # 只传递 user_query
         print(f"主意图分类结果: {intent}")
         return {"main_intent": intent, "error_message": None} # 清除之前的错误（如果有）
     except Exception as e:

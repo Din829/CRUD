@@ -3,9 +3,13 @@
 
 import sys
 import os
+import logging # 新增导入
 # Correct import path after installing langgraph-checkpoint-sqlite
 from langgraph.checkpoint.sqlite import SqliteSaver # 用于持久化状态
 import traceback # 导入 traceback
+
+# 新增：配置日志级别为 DEBUG
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # 确保证项目根目录在 Python 路径中，以便绝对导入能够工作
 # project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))

@@ -17,31 +17,46 @@ def fetch_schema_action(state: GraphState) -> Dict[str, Any]:
     对应 Dify 节点: '1743973869644'
     """
     print("---节点: 获取 Schema---")
-    user_query = state.get("user_query") # 保留 user_query
+    user_query = state.get("user_query") 
     try:
-        raw_schema_result = api_client.get_schema()
-        print(f"Schema 获取成功: {raw_schema_result}")
-        return {
-            "raw_schema_result": raw_schema_result, 
-            "error_message": None,
-            "user_query": user_query # 返回 user_query
-        }
+        # api_client.get_schema() 应该返回一个列表，例如: [schema_json_string]
+        schema_list_from_api = api_client.get_schema() 
+        
+        actual_schema_json_string = None
+        # 检查返回的是否是列表，且列表不为空，且列表第一个元素是字符串
+        if isinstance(schema_list_from_api, list) and len(schema_list_from_api) > 0 and isinstance(schema_list_from_api[0], str):
+            actual_schema_json_string = schema_list_from_api[0]
+        
+        if actual_schema_json_string:
+            print(f"Schema JSON 字符串提取成功 (长度: {len(actual_schema_json_string)})")
+            return {
+                "raw_schema_result": actual_schema_json_string,
+                "error_message": None,
+                "user_query": user_query
+            }
+        else:
+            error_msg = f"从 API 获取的 Schema 响应格式不正确或为空。收到的内容: {schema_list_from_api}"
+            print(error_msg)
+            return {"error_message": error_msg, "user_query": user_query, "raw_schema_result": None}
+
     except Exception as e:
+        # 捕获 api_client.get_schema() 可能抛出的异常 (RequestException, ValueError)
         error_msg = f"获取 Schema 失败: {str(e)}"
         print(error_msg)
-        return {"error_message": error_msg, "user_query": user_query} # 出错也要返回
+        return {"error_message": error_msg, "user_query": user_query, "raw_schema_result": None}
 
 def extract_table_names_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：使用 LLM 从原始 Schema 中提取表名。"""
     print("---节点: 提取表名---")
     user_query = state.get("user_query") # 保留 user_query
-    raw_schema = state.get("raw_schema_result")
-    if not raw_schema:
+    raw_schema_string = state.get("raw_schema_result") # raw_schema_string 是一个 JSON 字符串
+    if not raw_schema_string:
         error_msg = "无法提取表名：原始 Schema 缺失。"
         print(error_msg)
         return {"error_message": error_msg, "user_query": user_query}
     try:
-        table_names_str = llm_preprocessing_service.extract_table_names(raw_schema)
+        # llm_preprocessing_service.extract_table_names 期望一个 List[str]
+        table_names_str = llm_preprocessing_service.extract_table_names([raw_schema_string])
         print(f"LLM 提取的表名 (原始字符串):\n{table_names_str}")
         if not table_names_str:
              print("警告: LLM 未能提取到任何表名。")
@@ -74,13 +89,14 @@ def format_schema_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：使用 LLM 将原始 Schema 格式化为干净的 JSON 字符串。"""
     print("---节点: 格式化 Schema---")
     user_query = state.get("user_query") # 保留 user_query
-    raw_schema = state.get("raw_schema_result")
-    if not raw_schema:
+    raw_schema_string = state.get("raw_schema_result") # raw_schema_string 是一个 JSON 字符串
+    if not raw_schema_string:
         error_msg = "无法格式化 Schema：原始 Schema 缺失。"
         print(error_msg)
         return {"error_message": error_msg, "user_query": user_query}
     try:
-        formatted_schema = llm_preprocessing_service.format_schema(raw_schema)
+        # llm_preprocessing_service.format_schema 期望一个 List[str]
+        formatted_schema = llm_preprocessing_service.format_schema([raw_schema_string])
         print(f"LLM 格式化后的 Schema: {formatted_schema}")
         if formatted_schema == "{}":
             print("警告: LLM 返回了空的 Schema 对象。")

@@ -148,6 +148,14 @@ def _route_delete_flow_on_error(state: GraphState) -> Literal["handle_delete_err
         print("--- Routing Delete Flow to Continue ---")
         return "continue"
 
+# 新增：初始化流程中每一步后的错误检查路由
+def _route_init_step_on_error(state: GraphState) -> Literal["handle_init_error", "continue"]:
+    """如果当前状态中存在 error_message, 则路由到错误处理，否则继续。"""
+    if state.get("error_message"):
+        print(f"--- 初始化步骤中检测到错误: {state.get('error_message')}, 路由到 handle_init_error ---")
+        return "handle_init_error"
+    return "continue"
+
 # --- 构建图 ---
 def build_graph() -> StateGraph:
     """构建并返回 LangGraph 应用的图实例。"""
@@ -259,12 +267,47 @@ def build_graph() -> StateGraph:
         }
     )
 
-    # 初始化流程顺序边
-    graph.add_edge("fetch_schema", "extract_table_names")
-    graph.add_edge("extract_table_names", "process_table_names")
-    graph.add_edge("process_table_names", "format_schema")
-    graph.add_edge("format_schema", "fetch_sample_data")
-    graph.add_edge("fetch_sample_data", "classify_main_intent_node")
+    # 初始化流程顺序边 - 修改为条件边以处理每一步的错误
+    graph.add_conditional_edges(
+        "fetch_schema",
+        _route_init_step_on_error,
+        {
+            "continue": "extract_table_names",
+            "handle_init_error": "handle_init_error"
+        }
+    )
+    graph.add_conditional_edges(
+        "extract_table_names",
+        _route_init_step_on_error,
+        {
+            "continue": "process_table_names",
+            "handle_init_error": "handle_init_error"
+        }
+    )
+    graph.add_conditional_edges(
+        "process_table_names",
+        _route_init_step_on_error,
+        {
+            "continue": "format_schema",
+            "handle_init_error": "handle_init_error"
+        }
+    )
+    graph.add_conditional_edges(
+        "format_schema",
+        _route_init_step_on_error,
+        {
+            "continue": "fetch_sample_data",
+            "handle_init_error": "handle_init_error"
+        }
+    )
+    graph.add_conditional_edges(
+        "fetch_sample_data",
+        _route_init_step_on_error, # 检查 fetch_sample_data 自身执行期间是否出错
+        {
+            "continue": "classify_main_intent_node", # 成功则进入主流程
+            "handle_init_error": "handle_init_error"
+        }
+    )
 
     # 主意图路由 (修改 modify 指向)
     graph.add_conditional_edges(
