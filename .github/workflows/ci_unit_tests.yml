@@ -1,0 +1,56 @@
+name: Backend API Unit Tests CI
+
+# 1. 定义触发工作流程的事件
+on:
+  push: # 当有代码推送到特定分支时
+    branches:
+      - main      # 您的主分支
+      - develop   # 如果您使用 develop 分支作为开发分支
+  pull_request: # 当有拉取请求指向特定分支时
+    branches:
+      - main
+      - develop
+
+jobs: # 工作流程由一个或多个作业 (job) 组成
+  test_backend_api: # 作业的唯一ID
+    name: Run Flask API Unit Tests # 作业的名称，显示在GitHub上
+    runs-on: ubuntu-latest # 指定运行作业的虚拟机环境
+
+    steps: # 作业由一系列步骤 (step) 组成
+      # 步骤1: 检出您的代码库
+      - name: Check out code
+        uses: actions/checkout@v4 # 使用官方的 checkout action
+
+      # 步骤2: 设置 Python 环境
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10' # 根据您的项目选择Python版本，例如3.10
+          cache: 'pip' # 缓存依赖项以加快后续构建速度
+
+      # 步骤3: 安装项目依赖
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt # 确保您的 requirements.txt 文件是最新的
+
+      # 步骤4: 准备测试数据库 (关键步骤!)
+      # 运行数据库初始化脚本 (假设位于 scripts/init_test_db.py)
+      - name: Initialize Test Database
+        run: |
+          mkdir -p ./test_db_data # 创建一个目录存放测试数据库文件（如果使用SQLite）
+          python scripts/init_test_db.py # 运行您的数据库初始化脚本
+        env:
+          # 将测试数据库的URL作为环境变量传递给初始化脚本
+          # 这里使用SQLite作为示例，数据库文件将放在 test_db_data/test_app.db
+          TEST_DATABASE_URL: "sqlite:///./test_db_data/test_app.db" 
+          # 您可能还需要其他环境变量，例如CSV文件的路径（如果脚本内部不处理相对路径）
+
+      # 步骤5: 运行单元测试
+      - name: Run Pytest for API
+        run: pytest text/unittests/test_app_apis.py # Correct path to the unit tests
+        env:
+          # 确保 app.py 在测试时使用CI环境的数据库配置
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }} # 将上一步设置的测试库URL传递给测试执行环境
+          FLASK_ENV: "testing" # 设置Flask环境为测试（如果需要）
+          # 如果需要 secrets，可以使用 secrets.YOUR_SECRET_NAME 语法 

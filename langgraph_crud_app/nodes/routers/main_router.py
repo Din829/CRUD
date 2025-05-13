@@ -26,14 +26,41 @@ def classify_main_intent_node(state: GraphState) -> Dict[str, Any]:
     #     return {"main_intent": "confirm_other", "error_message": error_msg}
 
     try:
-        intent = llm_query_service.classify_main_intent(user_query) # 只传递 user_query
-        print(f"主意图分类结果: {intent}")
-        return {"main_intent": intent, "error_message": None} # 清除之前的错误（如果有）
+        classification_result = llm_query_service.classify_main_intent(user_query)
+        intent_string = "confirm_other" # 默认值
+        
+        if isinstance(classification_result, dict):
+            # 如果是字典，尝试获取 'intent' 键
+            intent_string = classification_result.get("intent", "confirm_other")
+            if not isinstance(intent_string, str) or not intent_string.strip():
+                print(f"警告: 从LLM分类结果字典中获取的意图 '{intent_string}' 不是有效字符串，默认为 confirm_other。")
+                intent_string = "confirm_other"
+        elif isinstance(classification_result, str) and classification_result.strip():
+            # 如果是有效字符串，直接使用
+            intent_string = classification_result
+            # 可选: 验证 intent_string 是否是已知的有效意图之一
+            # valid_intents = ["query_analysis", "modify", "add", "delete", "composite", "confirm_other", "reset"]
+            # if intent_string not in valid_intents:
+            #     print(f"警告: LLM直接返回的意图 '{intent_string}' 不是已知有效意图，默认为 confirm_other。")
+            #     intent_string = "confirm_other"
+        else:
+            print(f"警告: LLM分类结果 '{classification_result}' 类型未知或为空，默认为 confirm_other。")
+
+        print(f"主意图分类结果: {classification_result}, 提取的意图字符串: {intent_string}")
+        return {
+            "main_intent": intent_string,
+            "main_intent_classification_details": classification_result if isinstance(classification_result, dict) else {"intent": intent_string, "details": "LLM directly returned string."},
+            "error_message": None
+        } # 清除之前的错误（如果有）
     except Exception as e:
         error_msg = f"主意图分类失败: {e}"
         print(error_msg)
         # 分类失败，也归入"确认/其他"分支进行处理
-        return {"main_intent": "confirm_other", "error_message": error_msg}
+        return {
+            "main_intent": "confirm_other",
+            "main_intent_classification_details": None, # 确保在错误时也设置
+            "error_message": error_msg
+        }
 
 def _route_after_main_intent(state: GraphState):
     """根据 LLM 分类的主意图进行路由。"""

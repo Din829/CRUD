@@ -71,9 +71,6 @@
 ### 状态
 此问题已通过上述代码修改解决。删除流程现在应能正确处理包含有效短WHERE子句的预览SQL，不再错误地将其标记为截断。
 
-
-
-
 ## 问题报告2: 复合操作中 `user_id` 占位符解析为空列表导致后端API错误的修复
 
 ### 问题描述
@@ -100,3 +97,165 @@
 如果一个 `insert` 操作因其依赖的 `{{db(...)}}` 查询未返回任何ID（导致ID解析为空列表）而被过滤掉，该特定 `insert` 步骤将被跳过，但复合操作中的其他有效步骤仍会正常执行。
 这避免了后端因类型不匹配而抛出 `ValueError`，使得整个复合操作流程在类似场景下更加健壮。
 例如，在之前的测试场景中，原计划包含一个 `update` 和一个 `insert`，当 `insert` 的 `user_id` 解析为空列表后，现在只有 `update` 操作（其 `WHERE id IN []` 条件使其不影响任何行）被发送到后端，操作成功完成，不再报错。
+
+## 问题报告3: CI 单元测试 `test_get_schema_success` 失败 - `AssertionError: assert None == 'bigint'`
+
+### 背景
+
+在成功完成初始化流程的集成测试后，我们开始进行 CI/CD 集成的第一阶段：为后端 Flask API (`app.py`) 实现基于 GitHub Actions 的单元测试自动化。主要步骤包括：
+1.  **创建 CI Workflow 文件**: `.github/workflows/ci_unit_tests.yml`，定义了在 push/pull_request 时触发测试的流程。
+2.  **创建数据库初始化脚本**: `scripts/init_test_db.py`，用于在 CI 环境中创建一个临时的 SQLite 测试数据库，并根据项目根目录 `text/` 下的 `表结构.txt` 和对应的 CSV 文件 (`users.csv`, `prompts.csv`, `api_tokens.csv`) 初始化表结构和数据。
+3.  **适配单元测试**: 由于主应用 `app.py` 使用 PyMySQL 连接 MySQL 数据库，而 CI 环境使用 SQLite，因此需要修改单元测试文件 `text/unittests/test_app_apis.py` 来 mock 数据库连接。
+
+### 问题现象
+
+在本地环境模拟 CI 流程，先运行 `python scripts/init_test_db.py` 初始化 SQLite 数据库，然后运行 `pytest text/unittests/test_app_apis.py` 时，`test_get_schema_success` 测试用例失败，而 `test_get_schema_db_connection_error` 通过。具体的失败信息如下：
+
+```
+FAILED text/unittests/test_app_apis.py::test_get_schema_success - AssertionError: assert None == 'bigint'
+E        +  where None = <built-in method get of dict object at ...>('Type')
+...
+-------------------------------------------------------------------------------------------------------------- Captured stdout call ---------------------------------------------------------------------------------------------------------------
+...
+[Mock Cursor] execute() called with SQL: SHOW TABLES
+[Mock Cursor] Mocking SHOW TABLES. Results: [...]
+[Mock Cursor] fetchall() called.
+[Mock Cursor] Returning mocked results for fetchall(): 3 rows
+[Mock Cursor] execute() called with SQL: DESCRIBE `api_tokens`
+[Mock Cursor] Mocking DESCRIBE api_tokens. Results count: 6
+[Mock Cursor] fetchall() called.
+[Mock Cursor] Returning mocked results for fetchall(): 6 rows
+...
+---------------------------------------------------------------------------------------------------------------- Captured log call ----------------------------------------------------------------------------------------------------------------
+# 注意：上一次运行中出现的 'near "SHOW": syntax error' 错误已通过更完善的 Mock 解决，本次无此日志
+```
+
+### 排查过程
+
+1.  **确认 Mock 连接生效**: stdout 日志清晰显示 `[Fixture mock_db] Yielding Mock PyMySQL Connection wrapping SQLite...`，表明 `mock_db` fixture 正在运行。
+2.  **确认 Mock Cursor 拦截生效**: stdout 日志显示 `[Mock Cursor] execute() called with SQL: SHOW TABLES` 和 `[Mock Cursor] execute() called with SQL: DESCRIBE ...`，并且正确打印了 Mocking 的信息和返回的模拟结果行数。这证明了 Mock Cursor 成功拦截了这些 MySQL 特定的命令，没有将它们传递给底层的 SQLite。
+3.  **分析 `app.py` 的 `/get_schema` 逻辑**: 该端点通过 `cursor.execute("SHOW TABLES")` 获取表名，然后对每个表执行 `cursor.execute(f"DESCRIBE `{table}`")`。它遍历 `fetchall()` 返回的 DESCRIBE 结果（我们的 Mock 提供了这些结果，键为 `'Field', 'Type', 'Null', 'Key', 'Default'`），并构建最终的 Schema 字典。**关键在于**，它在构建最终字典时，使用了**小写**的键名：
+    ```python
+    # app.py /get_schema 内部逻辑片段
+    field["Field"]: { 
+        "type": field["Type"], # 使用小写 'type' 作为最终 key
+        "null": field["Null"], # 使用小写 'null'
+        "key": field["Key"],
+        "default": field["Default"]
+    } 
+    ```
+4.  **分析测试断言失败点**: 测试在 `text/unittests/test_app_apis.py:185` 失败：
+    ```python
+    assert field_details_api.get('Type') == field_details_expected.get('type')
+    ```
+    *   `field_details_api` 来自 API 返回的 JSON 解析后的字典。根据步骤 3 的分析，这个字典的键应该是小写的 (`'type', 'null', ...`)。
+    *   `field_details_expected` 来自直接从 `表结构.txt` 文件加载的 JSON 解析后的字典，其键也是小写的 (`'type', 'null', ...`)。
+    *   断言 `field_details_api.get('Type')` 尝试用**大写**的 `'Type'` 从 API 返回的字典中取值。由于 API 返回的字典中只有小写的 `'type'` 键，`get('Type')` 返回 `None`。
+    *   断言 `field_details_expected.get('type')` 使用小写的 `'type'` 从文件加载的字典中取值，成功取到了例如 `'bigint'`。
+    *   因此，断言变成了 `assert None == 'bigint'`，导致测试失败。
+
+### 根本原因
+
+**`test_get_schema_success` 测试用例中的断言逻辑存在错误。** 它在比较从 API 获取的 Schema 字段详情 (`field_details_api`) 时，错误地使用了大写的键名 (`'Type'`, 可能后续还有 `'Null'`, `'Key'`, `'Default'`) 来访问字典，而 `/get_schema` API 实际返回的 JSON 结构中使用的是小写键名 (`'type'`, `'null'`, `'key'`, `'default'`)。
+
+### 建议修复方案
+
+修改 `text/unittests/test_app_apis.py` 文件中 `test_get_schema_success` 函数内的断言逻辑，确保在访问 `field_details_api` 字典时使用小写键名，与 API 返回的实际结构保持一致。例如：
+
+```python
+# 原错误断言:
+# assert field_details_api.get('Type') == field_details_expected.get('type')
+# assert field_details_api.get('Null') == field_details_expected.get('null')
+# assert field_details_api.get('Key') == field_details_expected.get('key')
+
+# 修改后应为:
+assert field_details_api.get('type') == field_details_expected.get('type')
+assert field_details_api.get('null') == field_details_expected.get('null')
+assert field_details_api.get('key') == field_details_expected.get('key')
+# Default 的比较可能仍需注意 None vs null 的细微差别，但键名应为小写
+# assert field_details_api.get('default') == field_details_expected.get('default') 
+```
+
+### 当前状态
+
+问题已定位，根本原因为测试代码中的断言错误。修复方案已明确，等待下次开发时实施。
+
+## 问题报告4: 集成测试中 `generate_select_sql_action` 期望字符串但 Mock 返回字典导致 AttributeError
+
+### 问题描述
+在 `test_simple_select_query_success` 集成测试中，当流程进入 `generate_select_sql_action` 节点时，测试失败并抛出 `AttributeError: 'dict' object has no attribute 'startswith'`。该错误发生在 `generate_select_sql_action` 函数内部，当它尝试对 `llm_query_service.generate_select_sql()` 的返回值调用 `.startswith("ERROR:")` 方法时。
+
+### 根本原因
+1.  **Action 节点期望**: `generate_select_sql_action` 函数期望其调用的服务层函数 `llm_query_service.generate_select_sql()` 直接返回一个字符串。这个字符串要么是成功生成的 SQL 语句，要么是一个以 "ERROR:" 开头的错误或澄清提示。
+2.  **Mock 配置错误**: 在测试用例 `test_simple_select_query_success` 中，对 `llm_query_service.generate_select_sql` 的 mock (`mock_generate_select_sql`) 的 `return_value` 被错误地设置成了一个包含多个键值对的字典（例如 `{"sql_query": "SELECT...", "error_message": None, ...}`）。
+3.  **类型不匹配**: 因此，当 `generate_select_sql_action` 接收到这个字典并尝试将其作为字符串处理（调用 `.startswith()`）时，Python 解释器正确地抛出了 `AttributeError`。
+
+这本质上是一个 Mock 与被测代码（Action 节点）对 Service 层函数返回值的预期不一致的问题。
+
+### 解决方案
+修改测试用例 `test_simple_select_query_success` 中对 `llm_query_service.generate_select_sql` Mock 的返回值，使其与 Action 节点的期望一致。
+
+例如，如果模拟成功生成 SQL 的情况，应设置为：
+`mock_generate_select_sql.return_value = "SELECT id, name FROM users WHERE name = 'Alice'"`
+
+如果模拟 LLM 服务返回错误或需要澄清的情况，应设置为：
+`mock_generate_select_sql.return_value = "ERROR: 需要更明确的查询条件。"`
+
+Action 节点 (`generate_select_sql_action`) 自身负责根据这个字符串返回值来构建最终更新 `GraphState` 的字典（例如 `{"sql_query_generated": sql_string, ...}` 或 `{"final_answer": error_string, ...}`）。
+
+### 状态
+问题已定位。解决方案是调整测试中对 `llm_query_service.generate_select_sql` Mock 的返回值，使其与 Action 节点的期望一致。等待在测试代码中实施此修改。
+
+## 问题报告5: 集成测试 `test_simple_select_query_success` 断言 `mock_execute_sql_query` 的参数细节
+
+### 问题描述
+在 `test_simple_select_query_success` 集成测试中，即使流程几乎完整跑通，`mock_execute_sql_query.assert_called_once_with(...)` 的断言也多次失败。问题焦点在于确定 `api_client.execute_query` 被调用时，其接收的 SQL 查询字符串究竟是 LLM (`generate_select_sql_action`) 生成的原始 SQL，还是经过 `clean_sql_action` （通常是添加了分号）处理后的 SQL。
+
+### 过程分析与根本原因
+1.  **初始假设**: 一度认为 `api_client.execute_query` 内部会处理分号，或者 `execute_sql_query_action` 会传递不带分号的 SQL。
+2.  **代码审查 (`api_client.py`)**: 审查 `api_client.execute_query` 显示它确实会移除末尾分号（如果存在）。但这描述的是 `api_client` 内部的行为，而不是它期望接收的参数。
+3.  **LangGraph 流程追踪**: 通过仔细分析 `pytest` 的输出和 LangGraph 的节点执行顺序，我们确认了以下流程：
+    *   `generate_select_sql_action` 节点将 LLM 返回的 SQL（不带分号）存入 `GraphState` 的 `sql_query_generated`。
+    *   `clean_sql_action` 节点读取 `sql_query_generated`，执行清理（主要是添加末尾分号），然后用处理后的 SQL 更新 `GraphState` 中的 `sql_query_generated`。
+    *   `execute_sql_query_action` 节点读取更新后的 `sql_query_generated` (带分号)，并将其作为参数传递给 `api_client.execute_query`。
+4.  **根本原因**: 因此，对 `mock_execute_sql_query` 的断言，其 SQL 参数必须是经过 `clean_sql_action` 处理后的、带有分号的字符串。
+
+### 解决方案
+在 `test_simple_select_query_success` 测试用例中，确保：
+1.  有一个变量存储 LLM 模型原始返回的 SQL（例如 `expected_sql_from_llm`，不带分号），用于设置 `mock_generate_select_sql.return_value`。
+2.  另有一个变量存储经过 `clean_sql_action` 处理后、预期传递给 `api_client.execute_query` 的 SQL（例如 `expected_sql_for_assertion`，带分号）。
+3.  `mock_execute_sql_query.assert_called_once_with(expected_sql_for_assertion)` 使用带分号的 SQL 进行断言。
+
+### 涉及的主应用代码修改（回顾）
+在解决此测试及相关流程问题的过程中，对主应用进行了以下关键修改，这些修改也应被记录和评估：
+1.  **`langgraph_crud_app/nodes/routers/main_router.py` (`classify_main_intent_node`)**: 修改了此节点以确保它正确地从LLM服务返回的字典中提取 `intent` 字符串并将其放入 `GraphState` 的 `main_intent` 字段。这是为了修复早期图路由错误的问题。
+2.  **`langgraph_crud_app/nodes/actions/query_actions.py` (`execute_sql_query_action`)**: 修改了此节点，确保 `api_client.execute_query` 返回的 Python 对象结果被 `json.dumps()` 转换为 JSON 字符串后存入 `GraphState` 的 `sql_result` 字段。这是为了解决 `TypeError`，因为图状态期望的是可序列化的数据。
+3.  **`langgraph_crud_app/nodes/actions/query_actions.py` (`format_query_result_action`)**: 修改了此节点，确保它从LLM服务返回的字典中提取格式化后的字符串，并直接将其作为 `final_answer` 返回，以更新 `GraphState`。这是为了解决 `AssertionError`，因为图状态期望的是最终的字符串答案，而不是包含答案的字典。
+
+这些对主应用代码的修改虽然解决了测试中暴露的问题，但也提醒我们需要谨慎，优先通过调整测试来解决问题，将主代码修改作为确认存在缺陷后的最后手段。
+
+### 状态
+问题已解决。通过正确理解 LangGraph 中节点间的数据流和状态修改，精确配置了 Mock 的断言参数，使得 `test_simple_select_query_success` 测试最终通过。
+
+## 问题报告6: `classify_main_intent_node` 对LLM直接返回字符串的处理不当导致意图错误
+
+### 问题描述
+在主应用运行时，当用户输入查询（例如 "查询使用openaiToken的用户"）后，`llm_query_service.classify_main_intent` 服务直接返回了意图字符串（例如 `"query_analysis"`）。然而，`classify_main_intent_node` 节点之前的逻辑期望该服务返回一个包含 `intent` 键的字典。当收到字符串时，它错误地将意图解析为默认的 `"confirm_other"`，导致图流程走错分支，用户收到不相关的提示。
+
+### 根本原因
+`langgraph_crud_app/nodes/routers/main_router.py` 文件中的 `classify_main_intent_node` 函数内，提取意图的核心逻辑如下：
+`intent_string = classification_result.get("intent") if isinstance(classification_result, dict) else "confirm_other"`
+此代码在 `classification_result` 为字符串时，`isinstance(classification_result, dict)` 为 `False`，直接导致 `intent_string` 被设置为 `"confirm_other"`，忽略了 `classification_result` 本身可能就是正确的意图字符串。
+
+### 解决方案
+修改了 `classify_main_intent_node` 函数，使其能够更稳健地处理 `llm_query_service.classify_main_intent` 返回的 `classification_result`：
+1.  将 `intent_string` 初始化为默认值 `"confirm_other"`。
+2.  **如果 `classification_result` 是字典**：尝试从中获取 `"intent"` 键的值。如果获取失败或获取到的不是有效字符串，则 `intent_string` 保持默认值。
+3.  **如果 `classification_result` 是一个非空字符串**：直接将该字符串用作 `intent_string`。
+4.  **其他情况**（例如 `None` 或空字符串）：`intent_string` 保持默认值，并打印警告。
+5.  相应地调整了 `main_intent_classification_details` 的赋值逻辑，以在 `classification_result` 是字符串时也能记录下有用的信息。
+
+这个修改确保了无论LLM服务返回的是包含意图的字典还是直接的意图字符串，节点都能正确提取或使用意图，提高了意图分类的鲁棒性。
+
+### 状态
+问题已通过上述代码修改解决。主应用现在能够正确处理LLM直接返回意图字符串的情况。该修改也兼容了集成测试中LLM Mock返回字典的场景。

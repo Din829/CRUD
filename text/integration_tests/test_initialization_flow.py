@@ -34,7 +34,7 @@ MOCK_RAW_SCHEMA = {
         "foreign_keys": {"posts_ibfk_1": {"referenced_table": "users", "columns": ["user_id"], "referenced_columns": ["id"]}}
     }
 }
-MOCK_API_GET_SCHEMA_RESPONSE = {"result": [json.dumps(MOCK_RAW_SCHEMA)]}
+MOCK_API_GET_SCHEMA_RESPONSE = [json.dumps(MOCK_RAW_SCHEMA)]
 
 MOCK_LLM_EXTRACTED_TABLE_NAMES_STR = "users\nposts"
 MOCK_PROCESSED_TABLE_NAMES_LIST = ["users", "posts"]
@@ -171,14 +171,15 @@ def test_initialization_flow_first_run_success(compiled_graph):
         call_args = mock_classify_main_intent.call_args
         assert call_args is not None, "classify_main_intent 未被调用"
         passed_args = call_args[0]
+        assert len(passed_args) == 1, f"classify_main_intent 应只接收一个参数, 实际接收了 {len(passed_args)} 个: {passed_args}"
         assert passed_args[0] == initial_state["user_query"]
 
         # 检查 API 和 LLM 调用
         mock_get_schema.assert_called_once()
         mock_extract_tables.assert_called_once()
-        assert mock_extract_tables.call_args[0][0] == MOCK_API_GET_SCHEMA_RESPONSE['result'][0]
+        assert mock_extract_tables.call_args[0][0] == [MOCK_API_GET_SCHEMA_RESPONSE[0]]
         mock_format_schema.assert_called_once()
-        assert mock_format_schema.call_args[0][0] == MOCK_API_GET_SCHEMA_RESPONSE['result'][0]
+        assert mock_format_schema.call_args[0][0] == [MOCK_API_GET_SCHEMA_RESPONSE[0]]
         # 预期调用次数 = 获取样本数据的次数 (len(MOCK_PROCESSED_TABLE_NAMES_LIST))
         # + 后续主流程处理用户查询 "查找所有用户" 时执行 SELECT SQL 的次数 (1)
         expected_execute_query_calls = len(MOCK_PROCESSED_TABLE_NAMES_LIST) + 1
@@ -193,7 +194,7 @@ def test_initialization_flow_metadata_exists_skips_initialization(compiled_graph
     """
     initial_state_with_metadata = GraphState(
         user_query="这是一个后续查询",
-        raw_schema_result=MOCK_API_GET_SCHEMA_RESPONSE['result'][0], 
+        raw_schema_result=MOCK_API_GET_SCHEMA_RESPONSE[0], 
         biaojiegou_save=MOCK_LLM_FORMATTED_SCHEMA_STR,
         table_names=MOCK_PROCESSED_TABLE_NAMES_LIST,
         raw_table_names_str=MOCK_LLM_EXTRACTED_TABLE_NAMES_STR, 
@@ -224,6 +225,7 @@ def test_initialization_flow_metadata_exists_skips_initialization(compiled_graph
         mock_classify_main_intent.assert_called_once()
         call_args = mock_classify_main_intent.call_args
         passed_args = call_args[0]
+        assert len(passed_args) == 1, f"classify_main_intent 应只接收一个参数, 实际接收了 {len(passed_args)} 个: {passed_args}"
         assert passed_args[0] == initial_state_with_metadata["user_query"]
 
         assert final_state_values.get("biaojiegou_save") == MOCK_LLM_FORMATTED_SCHEMA_STR
@@ -395,10 +397,11 @@ def test_initialization_flow_state_reset_after_success(compiled_graph, memory_sa
         for _ in compiled_graph.stream(initial_state_step1, config=config_step1):
             pass 
         
+        
         current_checkpoint = memory_saver.get(config_step1)
         if current_checkpoint:
             # Access channel_values for the state dictionary
-            updated_values = current_checkpoint.copy()
+            updated_values = current_checkpoint.copy()# <---  这一行
             updated_values["final_answer"] = "这是上一次交互的最终答案"
             updated_values["error_message"] = "这是上一次交互的错误信息"
             updated_values["biaojiegou_save"] = MOCK_LLM_FORMATTED_SCHEMA_STR

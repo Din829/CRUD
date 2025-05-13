@@ -82,8 +82,12 @@ def execute_sql_query_action(state: GraphState) -> Dict[str, Any]:
         return {"final_answer": state.get("final_answer", "无法执行查询。"), "sql_result": None, "error_message": error_msg}
     try:
         print(f"执行 SQL: {sql_query}")
-        result_str = api_client.execute_query(sql_query)
-        print(f"查询结果 (JSON string): {result_str}")
+        # api_client.execute_query 预期返回 Python 对象 (例如 list of dicts)
+        result_obj = api_client.execute_query(sql_query)
+        # 将 Python 对象转换为 JSON 字符串以存入 GraphState
+        result_str = json.dumps(result_obj)
+        print(f"查询结果 (Python object): {result_obj}") # 日志中保留原始对象以便观察
+        print(f"查询结果 (JSON string for state): {result_str}")
         return {"sql_result": result_str, "error_message": None, "final_answer": None}
     except Exception as e:
         error_msg = f"执行 SQL 查询时出错: {e}"
