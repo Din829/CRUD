@@ -165,5 +165,9 @@ langgraph_crud_app/
 ├── 删除流程说明.txt        # 新增: 删除流程实现进度
 └── .cursor/                # Cursor IDE 配置 (可选)
 
+# --- CI/CD (持续集成/持续部署) ---
+# .github/
+# └── workflows/            # 存放 CI/CD 工作流程配置文件 (例如 GitHub Actions 的 .yml 文件)
+
 # --- 外部文件 (辅助理解 Dify 逻辑) ---
 # ... (省略 Dify 相关文件列表)

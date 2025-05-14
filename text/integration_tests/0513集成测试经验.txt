@@ -118,4 +118,31 @@
     *   **警惕副作用**: 修改主应用代码（尤其是在复杂的 LangGraph 流程中）始终存在引入新 Bug 或掩盖其他问题的风险。必须谨慎评估修改可能带来的潜在影响。
     *   **优先调整测试**: 在确保主逻辑正确的前提下，优先通过调整测试的 Mock 和断言来解决测试失败，这通常是更安全、更符合测试目的的做法。
 
+## 11. Mock 服务层函数、Action 节点交互及参数断言精确性 (新增经验)
+
+本次调试 `test_query_no_result_found` 测试用例时，再次遇到关于 Mock 参数断言的 `AssertionError`，具体经验如下：
+
+*   **A. 服务层 Mock 的返回值应为 Action 节点的直接输入**:
+    *   **场景**: Action 节点（如 `generate_select_sql_action`）调用一个服务层函数（如 `llm_query_service.generate_select_sql`）。该 Action 节点期望服务层函数返回一个可以直接处理的数据（例如，一个 SQL 字符串）。之后，Action 节点会将这个数据连同其他信息（如错误状态、调试日志）一起组织成一个字典，用于更新 `GraphState`。
+    *   **Mock 策略**: 当 Mock 这个服务层函数时（例如 `mock_generate_select_sql_service`），其 `.return_value` 应该模拟服务层函数返回给 Action 节点的 *直接、原始数据*（在这个例子中是 SQL 字符串）。
+    *   **常见错误**: 错误地将服务层 Mock 的 `.return_value` 设置为 Action 节点最终用于更新 `GraphState` 的那个复杂字典。Action 节点自身负责构建这个状态更新字典。
+    *   **如何确定**: 阅读 Action 节点的代码，看它是如何处理服务层函数返回值的。如果 Action 直接对返回值调用了字符串方法（如 `.startswith()`），那么服务层 Mock 就必须返回字符串。
+
+*   **B. `assert_called_once_with` 对参数匹配的严格性**:
+    *   **场景**: 对一个被 Mock 的函数（例如 `api_client.execute_query`）使用 `assert_called_once_with` 来验证其调用参数。
+    *   **问题**: 如果被 Mock 函数的定义包含可选的关键字参数（如 `table_name=None, record_id=None`），但在实际调用时，调用方（如 `execute_sql_query_action`）只传递了必需的位置参数（如 `query_string`），而没有显式传递那些可选参数（即使它们会取默认值 `None`）。此时，如果断言中包含了这些可选的关键字参数（如 `mock_obj.assert_called_once_with(query_string, table_name=None, ...)`），断言将会失败。
+    *   **原因**: `assert_called_once_with` 会严格比较期望的参数列表（包括关键字参数的存在性）与实际调用时的参数列表。
+    *   **解决方案**: 
+        1.  **查阅函数定义**: 确认被 Mock 函数的实际签名。
+        2.  **根据实际调用调整断言**: 如果实际调用时只传入了位置参数，那么断言也应该只包含这些位置参数，例如 `mock_obj.assert_called_once_with(actual_pos_arg1, actual_pos_arg2)`。如果实际调用时还传入了关键字参数，断言中也需要包含它们。
+        3.  **Pytest 日志解读**: 注意 Pytest 失败日志中的 `Expected:` 和 `Actual:` 部分，它们清晰地展示了 Mock 期望的调用签名与实际发生的调用签名之间的差异。
+
+*   **C. LLM 服务调用中 `config` 和 `callbacks` 的传递与 Mock**:
+    *   **背景**: LangGraph 节点（如 `main_router.classify_main_intent_node`）通常从 LangGraph 框架接收一个 `config` 对象，其中可能包含 `callbacks` 等信息。这些节点在内部可能会调用更底层的 LLM 服务函数（如 `llm_query_service.classify_main_intent`）。
+    *   **问题**: 当 Mock 底层 LLM 服务并断言其调用参数时，是否应该期望 `config` 或 `callbacks` 作为参数被传递？
+    *   **分析与建议**: 
+        *   底层的服务函数（如 `llm_query_service.classify_main_intent`）的核心职责通常是处理具体的业务输入（例如用户查询文本、schema 信息等）。它们的设计可能不直接在其函数签名中接收 LangChain 的 `config` 或 `callbacks` 对象。
+        *   这些 LangChain 特有的配置参数更可能由调用这些服务的 LangGraph 节点（Action 或 Router）从其自身收到的 `config` 参数中提取，并按需（如果服务支持）传递，或者由 LangChain 的 Runnable 机制在更外层自动处理。
+        *   **Mock 断言策略**: 因此，在为这类底层服务函数编写调用断言时，应优先关注其核心业务参数的正确性。除非明确知道该服务函数设计为直接处理 `config` 或 `callbacks`，否则在 `assert_called_once_with` 中不应默认期望它们作为参数出现。如果断言因此失败（提示参数数量不匹配），则需要检查调用该服务的 Action/Router 节点是否真的传递了这些额外参数。
+
 通过这次调试，我们对 LangGraph 应用的集成测试有了更深入的理解，这些经验将对后续的测试工作非常有价值。 

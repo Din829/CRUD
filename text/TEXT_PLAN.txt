@@ -86,15 +86,15 @@
         - **[X] 1.3.2.** Mock LLM 服务调用失败，验证错误处理。
     - **[X] 1.4.** 状态重置检查：在一次成功的初始化后，发起一个新的简单查询，验证 `route_initialization_node` 是否正确重置了 `final_answer` 和 `error_message` 等，避免了状态污染。
 
-- **[ ] 2. 查询/分析流程 (`query_analysis_router.py`, `query_actions.py`, `llm_query_service.py`)**
-    - **[ ] 2.1.** 简单 `SELECT` 查询：
-        - **[ ] 2.1.1.** Mock `classify_main_intent` -> `query_analysis`, `classify_query_analysis_intent` -> `query`.
-        - **[ ] 2.1.2.** Mock `generate_select_sql` 返回一个有效的 `SELECT` SQL。
-        - **[ ] 2.1.3.** （可选 Mock）`clean_sql_action`。
-        - **[ ] 2.1.4.** （真实API或Mock）`execute_sql_query` 返回成功结果。
-        - **[ ] 2.1.5.** Mock `format_query_result` 返回格式化的文本。
-        - **[ ] 2.1.6.** 验证最终 `final_answer` 符合预期。
-    - **[ ] 2.2.** 分析查询（如 `COUNT(*)`)：类似 2.1，但意图为 `analysis`，验证相关节点。
+- **[X] 2. 查询/分析流程 (`query_analysis_router.py`, `query_actions.py`, `llm_query_service.py`)**
+    - **[X] 2.1.** 简单 `SELECT` 查询：
+        - **[X] 2.1.1.** Mock `classify_main_intent` -> `query_analysis`, `classify_query_analysis_intent` -> `query`.
+        - **[X] 2.1.2.** Mock `generate_select_sql` 返回一个有效的 `SELECT` SQL。
+        - **[X] 2.1.3.** （可选 Mock）`clean_sql_action`。
+        - **[X] 2.1.4.** （真实API或Mock）`execute_sql_query` 返回成功结果。
+        - **[X] 2.1.5.** Mock `format_query_result` 返回格式化的文本。
+        - **[X] 2.1.6.** 验证最终 `final_answer` 符合预期。
+    - **[X] 2.2.** 分析查询（如 `COUNT(*)`)：类似 2.1，但意图为 `analysis`，验证相关节点。
     - **[ ] 2.3.** 查询无结果：Mock `execute_sql_query` 返回空列表，验证流程走向 `handle_query_not_found` (或 `handle_analysis_no_data`) 并返回正确的 `final_answer`。
     - **[ ] 2.4.** SQL 生成失败：Mock `generate_select_sql` (或 `generate_analysis_sql`) 返回错误或请求澄清的提示，验证流程和 `final_answer`。
     - **[ ] 2.5.** SQL 执行失败：Mock `execute_sql_query` 返回 API 错误，验证流程走向澄清节点和 `final_answer`。
