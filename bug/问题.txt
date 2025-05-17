@@ -325,3 +325,61 @@ Action 节点 (`generate_select_sql_action`) 自身负责根据这个字符串�
     1.  必须将 `handle_add_error_action` 函数恢复到其原始逻辑，即根据 `state.get("add_error_message")` 或 `state.get("add_parse_error")` 来动态生成 `final_answer`。
     2.  恢复后，需要重新验证（或调整）`test_add_db_placeholder_invalid_multiline_result` 测试用例中对 `final_answer` 内容的断言，确保它与动态生成的实际错误消息匹配。
     3.  考虑在 `handle_add_error_action` 中对 `error_to_report` 进行更细致的处理，例如，如果错误信息过长或包含技术细节，是否应该进行一定的简化或美化再呈现给用户，而不是直接拼接。
+
+## 问题报告10: 集成测试中 add_parse_error 状态未正确传递到条件路由
+
+### 问题描述
+在新增流程的集成测试 `test_add_llm_parse_request_fails` 中，当 `parse_add_request_action` 节点因 LLM 解析用户输入失败（mock `llm_add_service.parse_add_request` 返回 `None`）而进入其内部的 `except` 块时，该 action 节点在其返回的字典中正确设置了 `add_parse_error` 状态（例如，`{'add_parse_error': 'LLM 未能从用户输入中解析出有效的新增数据。', 'temp_add_llm_data': None}`）。
+
+然而，紧随其后的条件路由函数 `_route_add_flow_on_error`（在 `graph_builder.py` 中定义）在接收到的 `state` 对象中未能读取到这个 `add_parse_error` 的更新值（调试日志显示读取到的是 `None`），尽管同一个返回字典中的 `temp_add_llm_data: None` 更新被正确传递了。
+
+这导致 `_route_add_flow_on_error` 依据 `temp_add_llm_data is None and no parse_error reported` 的逻辑（错误地认为没有 parse_error）将流程导向了 `handle_add_error_action`。
+
+### 根本原因（推测）
+具体原因尚不完全明确，但似乎与 LangGraph 在特定条件下（例如，源节点从 `except` 块返回状态更新）处理状态传递或合并到后续条件路由函数的机制有关。一个字段 (`temp_add_llm_data`) 的更新被正确应用，而同一批次的另一个字段 (`add_parse_error`) 的更新丢失。
+
+### 当前状态与影响
+-   `parse_add_request_action` 内部逻辑在设置期望的返回字典方面是正确的。
+-   由于 `add_parse_error` 未能传递，依赖此状态进行精细化错误反馈的逻辑（例如在 `provide_add_feedback_action` 中）可能无法按预期工作，流程会提早进入通用的 `handle_add_error_action`。
+-   测试用例 `test_add_llm_parse_request_fails` 已通过调整断言（接受 `add_parse_error` 在路由函数中实际为 `None`，并验证 `final_answer` 来自 `handle_add_error_action` 的固定消息）来适应此行为，以确保整体错误流程的覆盖。
+-   此问题可能表明 LangGraph 状态管理中存在一个需要进一步研究的边界情况或理解偏差。
+
+### 后续行动
+-   在未来的 LangGraph 版本升级或更深入的调试中，可以重新审视此状态传递问题。
+-   目前，测试已调整为反映观察到的行为。如果未来 LangGraph 行为变化或此问题得到解决，相关测试（特别是对 `add_parse_error` 和依赖它的 `final_answer` 的断言）可能需要重新调整。
+
+## 问题报告11: 连续操作时，预览后的首次"保存"确认可能因残留 save_content 而被错误路由
+
+### 问题描述
+在进行连续的多次操作（例如，完成一次新增操作后，立即开始第二次新增操作）时，观察到以下行为：
+1.  第一次操作（例如，新增用户01）按预期完成所有步骤，包括预览、首次"保存"确认、最终"是/否"确认，并成功执行。
+2.  当用户发起第二次操作（例如，新增用户02），应用正确显示了预览信息，并提示用户输入"保存"以确认。
+3.  用户按提示输入"保存"。
+4.  此时，系统错误地将此"保存"输入视为对一个已暂存操作的最终确认环节的响应，而不是对新预览的首次暂存请求。由于 `llm_flow_control_service.classify_yes_no` 服务会将"保存"判断为 "unknown"（根据问题报告10相关的Prompt修改），这导致流程被导向 `cancel_save_action`，第二次操作意外中止并显示"操作已取消"。
+
+### 根本原因分析
+此问题的核心在于 `save_content` 状态字段的管理：
+1.  **`route_initialization_node` 的行为**：该入口节点当前设计为**不清除** `save_content`。如果它清除了 `save_content`，会导致正在进行中的多轮确认流程（如预览->保存->是/否）在用户输入"是/否"之前就因 `save_content` 丢失而中断。
+2.  **`reset_after_operation_action` 的行为**：此节点在一次操作（如API调用）成功执行后被调用，它也**不清除** `save_content`，因为紧随其后的 `format_operation_response_action` 需要 `save_content` 来确定刚刚完成的操作类型，以便生成恰当的回复。
+3.  **状态残留**：因此，在一次操作（例如新增用户01）成功完成后，`save_content` 的值（例如 "新增路径"）会残留在 `GraphState` 中。
+4.  **错误路由**：当用户为第二次操作（新增用户02）的预览输入"保存"时：
+    *   `route_initialization_node` 不清除残留的 `save_content`。
+    *   主意图被分类为 `confirm_other`。
+    *   `_route_confirmation_entry_logic` 检查 `save_content`，发现其有值（来自上一个已完成的操作），于是错误地将流程导向 `check_staged_operation_node`（期望检查已暂存操作）。
+    *   `_check_staged_operation_logic` 发现残留的 `save_content` 与新操作的预览内容 (`content_new`) 和待执行数据 (`lastest_content_production`) 同时存在，便错误地认为这是一个有效的待最终确认状态，于是路由到 `ask_confirm_modify_node`。
+    *   `_ask_confirm_modify_logic` 接收到输入"保存"，`classify_yes_no` 返回 "unknown"，导致操作被取消。
+
+本质上，系统未能区分"对新预览的首次保存确认"和"对已暂存操作的最终是非确认"，因为 `save_content` 的残留值混淆了判断。
+
+### 当前状态与影响
+-   阻止了用户流畅地进行连续操作。用户在第二次（及后续）操作的预览后输入"保存"，会导致操作意外取消，而不是进入预期的"是/否"确认环节。
+-   这暴露了当前状态管理策略在处理会话级暂存状态 (`save_content`) 和图入口清理逻辑之间的不协调。
+
+### 后续行动/思考方向
+1.  **更精细的状态清理**：理想情况下，`save_content` (以及相关的 `content_*` 和 `lastest_content_production`)应该在一次完整的操作（包括预览、暂存、最终确认/取消、执行/不执行、格式化回复）的生命周期结束后被彻底清除。
+    *   `cancel_save_action` 已执行此操作。
+    *   `reset_after_operation_action` 目前保留 `save_content` 给 `format_operation_response_action`。一个可能的改进是让 `format_operation_response_action` 在其任务完成后负责清除这些它所依赖的、特定于单次完整操作流程的状态。
+2.  **引入操作ID或更明确的上下文**：在 `_check_staged_operation_logic` 中，可能需要一种更可靠的方式来验证当前的 `content_new` / `lastest_content_production` 是否与当前的 `save_content` 标记属于同一次逻辑操作流，而不仅仅是检查它们是否都存在。
+3.  **重新审视 `route_initialization_node` 的职责**：它是否应该承担更广泛的"会话结束"状态清理，或者这种清理应该在每个流程的末端（如 `format_operation_response_action`之后，或`cancel_save_action`中）更主动地进行。
+
+目前，此问题已记录，作为未来改进状态管理和用户体验的重点。

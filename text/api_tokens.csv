@@ -1,5 +1,3 @@
-﻿id,user_id,provider,token_value,created_at,updated_at
-2,2,Grok,tok_bob_1,2025-04-30 22:03:26,2025-04-30 22:03:26
 4,4,Grok,tok_diana_1,2025-04-30 22:03:26,2025-04-30 22:03:26
 6,6,Grok,tok_fiona_1,2025-04-30 22:03:26,2025-04-30 22:03:26
 9,9,openai,tok_ian_1,2025-04-30 22:03:26,2025-04-30 22:03:26
@@ -19,3 +17,4 @@
 31,34,airbnb,airbnb_1234567890abcdefxyz,2024-11-07 16:00:00,2024-11-07 16:00:00
 32,35,soundcloud,sc_1234567890abcdefxyz,2024-11-12 13:00:00,2024-11-12 13:00:00
 33,37,canva,canva_1234567890abcdefxyz,2024-11-22 12:00:00,2024-11-22 12:00:00
+39,67,OPENAI,bFcFU9j7sUekBJVIothLaZZ7T/jmNB+wborpmIQstRM=,2025-05-15 20:04:14,2025-05-15 20:04:14

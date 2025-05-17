@@ -172,13 +172,54 @@ def handle_invalid_save_state_action(state: GraphState) -> Dict[str, Any]:
 def cancel_save_action(state: GraphState) -> Dict[str, Any]:
     """
     节点动作：用户取消保存/确认操作。
-    对应 Dify 节点: '1742350702992' (赋值) + '1742350737329' (回复)
     """
     print("---节点: 取消保存操作---")
-    return {
-        "save_content": None,
-        "final_answer": "由于未收到明确保存指令，保存进程终止，你可以继续编辑内容，或输入'保存'重启保存流程"
+    
+    save_content_value = state.get("save_content")
+    
+    op_type_str_map = {
+        "修改路径": "修改",
+        "新增路径": "新增",
+        "删除路径": "删除",
+        "复合路径": "复合操作"
     }
+    
+    save_type_for_message = op_type_str_map.get(save_content_value, "当前") # 如果 save_content 为 None 或未知，则使用"当前"
+    
+    final_answer_message = f"操作已取消。您之前想要进行的【{save_type_for_message}】操作的内容已清除。"
+    
+    # 目的是清除与当前被取消的暂存操作相关的预览和待生产数据
+    keys_to_clear_on_cancel: List[str] = [
+        "save_content", 
+        "content_modify",
+        "content_new",
+        "content_delete",
+        "content_combined",
+        "lastest_content_production",
+        "delete_array", 
+        "raw_add_llm_output",
+        "structured_add_records",
+        "add_error_message", 
+        "add_parse_error",
+        "raw_modify_llm_output",
+        "modify_context_sql",
+        "modify_context_result",
+        "modify_error_message", 
+        "delete_preview_sql",
+        "delete_show",
+        "delete_preview_text",
+        "delete_error_message", 
+        "delete_ids_llm_output",
+        "delete_ids_structured_str",
+        "combined_operation_plan", 
+    ]
+    
+    updates = {key: None for key in keys_to_clear_on_cancel}
+    updates["final_answer"] = final_answer_message
+    
+    print(f"取消操作后，清除的状态键: {list(updates.keys())}")
+    
+    return updates
 
 def execute_operation_action(state: GraphState) -> Dict[str, Any]:
     """
@@ -373,7 +414,7 @@ def reset_after_operation_action(state: GraphState) -> Dict[str, Any]:
     print("---节点: 操作后重置状态---")
 
     keys_to_reset: List[str] = [
-        # "save_content", # 暂时不重置，format_operation_response_action 需要它
+        "save_content", # <--- 确保 save_content 在这里被重置
         # Modify related
         "content_modify",
         "modify_context_sql",
@@ -411,6 +452,11 @@ def reset_after_operation_action(state: GraphState) -> Dict[str, Any]:
     ]
 
     updates = {key: None for key in keys_to_reset}
+    # 确保即使 keys_to_reset 中没有显式列出，save_content 也被重置
+    # (虽然上面已经通过取消注释的方式加入了)
+    if "save_content" not in updates:
+        updates["save_content"] = None
+        
     print(f"重置状态键: {list(updates.keys())}")
     return updates
 

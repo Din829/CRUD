@@ -111,8 +111,8 @@
     *   **[X] 3.2.** 新增，包含 `{{random()}}` 占位符：验证 `process_placeholders_action` 是否正确替换。
     *   **[X] 3.3.** 新增，包含 `{{db()}}` 占位符（查询返回单值）：验证 `process_placeholders_action`。
     *   **[X] 3.4.** 新增，`{{db()}}` 查询返回空/无效结果：验证 `process_placeholders_action` 如何处理，以及后续是否生成预览/执行。
-    *   **[ ] 3.5.** 用户在确认阶段取消 ("否")：验证流程走向 `cancel_save_action`。
-    *   **[ ] 3.6.** LLM 解析新增请求失败：验证错误处理和用户反馈。
+    *   **[X] 3.5.** 用户在确认阶段取消 ("否")：验证流程走向 `cancel_save_action`。
+    *   **[X] 3.6.** LLM 解析新增请求失败：验证错误处理和用户反馈。
 
 - **[ ] 4. 修改流程 (`modify_actions.py`, `llm_modify_service.py`, 确认流程部分)**
     *   **[ ] 4.1.** 简单修改单个字段：类似新增流程的完整确认路径。

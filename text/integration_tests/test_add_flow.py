@@ -697,3 +697,216 @@ def test_add_db_placeholder_invalid_multiline_result(compiled_app):
                         assert final_state.get("error_flag") is True # Ensure error_flag is also checked
                         
                         print("test_add_db_placeholder_invalid_multiline_result PASSED")
+
+def test_add_user_cancels_on_final_confirmation(compiled_app):
+    """
+    测试 3.5: 用户在确认阶段("是/否")输入 "否" 取消操作。
+    验证流程走向 cancel_save_action，状态被清除，API不被调用。
+    """
+    # ---- ROUND 1: 用户发起新增请求，系统返回预览和保存提示 ----
+    initial_user_query_round1 = "帮我添加一个新用户，用户名是CancelAdd，邮箱是cancel@example.com，密码是cancelpass"
+    thread_id_round1 = "test-add-cancel-thread-r1"
+
+    # Define op_type_str_map here for use in Round 3 assertion
+    op_type_str_map = {
+        "修改路径": "修改",
+        "新增路径": "新增",
+        "删除路径": "删除",
+        "复合路径": "复合操作"
+    }
+
+    initial_state_round1 = GraphState(
+        user_query=initial_user_query_round1,
+        raw_user_input=initial_user_query_round1,
+        biaojiegou_save=MOCK_SCHEMA_JSON_STRING,
+        table_names=MOCK_TABLE_NAMES,
+        data_sample=json.dumps({"users": [{"id": 1, "username": "ExistingUser"}]}),
+        final_answer=None, error_message=None, temp_add_llm_data=None, add_structured_records_str=None,
+        add_processed_records_str=None, add_preview_text=None, add_error_message=None,
+        content_new=None, lastest_content_production=None, save_content=None, api_call_result=None,
+        add_parse_error=None
+        # Initialize other fields as None or default as needed per GraphState definition
+    )
+    initial_state_dict_round1 = dict(initial_state_round1)
+    config_round1 = {"configurable": {"thread_id": thread_id_round1}}
+
+    with patch('langgraph_crud_app.services.llm.llm_query_service.classify_main_intent') as mock_classify_main_intent:
+        with patch('langgraph_crud_app.services.llm.llm_add_service.parse_add_request') as mock_parse_add_request:
+            with patch('langgraph_crud_app.services.llm.llm_add_service.format_add_preview') as mock_format_add_preview:
+                
+                mock_classify_main_intent.return_value = {"intent": "add", "confidence": 0.98}
+                expected_llm_add_data_str_r1 = '[{"table_name": "users", "fields": {"username": "CancelAdd", "email": "cancel@example.com", "password": "cancelpass"}}]'
+                mock_parse_add_request.return_value = expected_llm_add_data_str_r1
+                expected_preview_text_r1 = "已准备好新增用户 CancelAdd。"
+                mock_format_add_preview.return_value = expected_preview_text_r1
+
+                final_state_dict_round1 = compiled_app.invoke(initial_state_dict_round1, config_round1)
+                final_state_round1 = GraphState(**final_state_dict_round1)
+
+                mock_classify_main_intent.assert_called_once_with(initial_user_query_round1)
+                parsed_llm_add_data_r1 = json.loads(expected_llm_add_data_str_r1)
+                expected_processed_records_for_service_r1 = {"users": [parsed_llm_add_data_r1[0]["fields"]]}
+
+                mock_format_add_preview.assert_called_once_with(
+                    query=initial_user_query_round1,
+                    schema=MOCK_SCHEMA_JSON_STRING,
+                    table_names=['users'],
+                    processed_records=expected_processed_records_for_service_r1
+                )
+                assert expected_preview_text_r1 in final_state_round1.get("final_answer", "")
+                assert "请输入 '保存' 以确认新增" in final_state_round1.get("final_answer", "")
+                assert final_state_round1.get("content_new") == expected_preview_text_r1
+                assert final_state_round1.get("lastest_content_production") == parsed_llm_add_data_r1
+                
+                print("test_add_user_cancels_on_final_confirmation - Round 1 PASSED")
+
+                # ---- ROUND 2: 用户输入 "保存"，系统请求最终确认 "是/否" ----
+                initial_user_query_round2 = "保存"
+                thread_id_round2 = "test-add-cancel-thread-r2"
+                
+                initial_state_round2 = GraphState(**final_state_dict_round1)
+                initial_state_round2["user_query"] = initial_user_query_round2
+                initial_state_round2["raw_user_input"] = initial_user_query_round2
+                initial_state_round2["final_answer"] = None
+                initial_state_round2["error_message"] = None 
+                initial_state_dict_round2 = dict(initial_state_round2)
+                config_round2 = {"configurable": {"thread_id": thread_id_round2}}
+
+                mock_classify_main_intent.reset_mock()
+                mock_classify_main_intent.return_value = {"intent": "confirm_other", "confidence": 0.99}
+
+                final_state_dict_round2 = compiled_app.invoke(initial_state_dict_round2, config_round2)
+                final_state_round2 = GraphState(**final_state_dict_round2)
+
+                mock_classify_main_intent.assert_called_once_with(initial_user_query_round2)
+                assert "以下是即将【新增】的信息" in final_state_round2.get("final_answer", "")
+                assert "请确认，并回复'是'/'否'" in final_state_round2.get("final_answer", "")
+                assert final_state_round2.get("save_content") == "新增路径"
+                
+                print("test_add_user_cancels_on_final_confirmation - Round 2 PASSED")
+
+                # ---- ROUND 3: 用户输入 "否"，系统取消操作 ----
+                initial_user_query_round3 = "否"
+                thread_id_round3 = "test-add-cancel-thread-r3"
+
+                initial_state_round3 = GraphState(**final_state_dict_round2)
+                initial_state_round3["user_query"] = initial_user_query_round3
+                initial_state_round3["raw_user_input"] = initial_user_query_round3
+                initial_state_round3["final_answer"] = None
+                initial_state_round3["error_message"] = None
+                initial_state_dict_round3 = dict(initial_state_round3)
+                config_round3 = {"configurable": {"thread_id": thread_id_round3}}
+
+                # Mock for Round 3: classify_main_intent and classify_yes_no
+                # api_client.insert_record should NOT be called.
+                with patch('langgraph_crud_app.services.llm.llm_flow_control_service.classify_yes_no') as mock_classify_yes_no:
+                    with patch('langgraph_crud_app.services.api_client.insert_record') as mock_insert_record_api:
+                        
+                        mock_classify_main_intent.reset_mock()
+                        mock_classify_main_intent.return_value = {"intent": "confirm_other", "confidence": 0.99} # User says "No", still a confirmation context
+                        mock_classify_yes_no.return_value = "no" # Key mock for cancellation
+
+                        final_state_dict_round3 = compiled_app.invoke(initial_state_dict_round3, config_round3)
+                        final_state_round3 = GraphState(**final_state_dict_round3)
+
+                        # Assertions for Round 3 (Cancellation)
+                        mock_classify_main_intent.assert_called_once_with(initial_user_query_round3)
+                        mock_classify_yes_no.assert_called_once_with(initial_user_query_round3)
+                        mock_insert_record_api.assert_not_called() # Crucial: API should not be called
+
+                        # The full message from cancel_save_action is:
+                        # f"操作已取消。您之前想要【{save_type}】的内容已清除。"
+                        # where save_type would be "新增路径" based on final_state_round2.get("save_content")
+                        # CORRECTED EXPECTATION: save_type should be the mapped value e.g. "新增"
+                        save_type_in_message = op_type_str_map.get(final_state_round2.get("save_content"), "未知操作")
+                        expected_cancel_message_full = f"操作已取消。您之前想要进行的【{save_type_in_message}】操作的内容已清除。"
+                        assert final_state_round3.get("final_answer", "") == expected_cancel_message_full
+                        
+                        # Verify states are cleared by cancel_save_action
+                        assert final_state_round3.get("save_content") is None, "save_content should be cleared after cancellation"
+                        assert final_state_round3.get("content_new") is None, "content_new should be cleared"
+                        assert final_state_round3.get("lastest_content_production") is None, "lastest_content_production should be cleared"
+                        assert final_state_round3.get("error_message") is None # No error in cancellation path
+
+                        print("test_add_user_cancels_on_final_confirmation - Round 3 PASSED")
+                        print("test_add_user_cancels_on_final_confirmation PASSED SUCCESSFULLY")
+
+def test_add_llm_parse_request_fails(compiled_app):
+    """
+    测试 3.6: LLM 解析新增请求失败 (parse_add_request 返回错误)。
+    验证流程是否正确转到错误处理，并向用户提供反馈。
+    """
+    initial_user_query = "帮我添加一些我也不知道是什么的东西"
+    thread_id = "test-add-parse-fail-thread"
+
+    initial_state = GraphState(
+        user_query=initial_user_query,
+        raw_user_input=initial_user_query,
+        biaojiegou_save=MOCK_SCHEMA_JSON_STRING,
+        table_names=MOCK_TABLE_NAMES,
+        data_sample=json.dumps({"users": [{"id": 1, "username": "ExistingUser"}]}),
+        final_answer=None, error_message=None, temp_add_llm_data=None, add_structured_records_str=None,
+        add_processed_records_str=None, add_preview_text=None, add_error_message=None,
+        content_new=None, lastest_content_production=None, save_content=None, api_call_result=None,
+        add_parse_error=None # Explicitly None initially
+    )
+    initial_state_dict = dict(initial_state)
+    config = {"configurable": {"thread_id": thread_id}}
+
+    # Mock llm_add_service.parse_add_request to return an error indicator
+    # 根据 add_actions.py 的 parse_add_request_action 逻辑:
+    # - 如果返回 None, 会设置 add_parse_error = "LLM未能解析出有效的新增数据结构。"
+    # - 如果返回非JSON字符串且不以 "ERROR:" 开头, 会在 json.loads 处失败，也可能设置 add_parse_error
+    # 我们选择 mock 返回 None，以测试其特定的错误消息
+    mocked_parse_error_return = None 
+    # 或者 mock_parse_error_return = "INVALID_JSON_BUT_NOT_ERROR_PREFIX"
+
+    with patch('langgraph_crud_app.services.llm.llm_query_service.classify_main_intent') as mock_classify_main_intent:
+        with patch('langgraph_crud_app.services.llm.llm_add_service.parse_add_request') as mock_parse_add_request_service:
+            # Mock actions that should NOT be called if parsing fails
+            with patch('langgraph_crud_app.nodes.actions.add_actions.process_add_llm_output_action') as mock_process_output_action:
+                with patch('langgraph_crud_app.nodes.actions.add_actions.process_placeholders_action') as mock_process_placeholders_action:
+                    with patch('langgraph_crud_app.nodes.actions.add_actions.format_add_preview_action') as mock_format_preview_action:
+                        
+                        mock_classify_main_intent.return_value = {"intent": "add", "confidence": 0.99}
+                        mock_parse_add_request_service.return_value = mocked_parse_error_return
+
+                        # 调用图
+                        final_state_dict = compiled_app.invoke(initial_state_dict, config)
+                        final_state = GraphState(**final_state_dict)
+
+                        # 1. 验证 mock_parse_add_request_service 被正确调用
+                        mock_parse_add_request_service.assert_called_once_with(
+                            user_query=initial_user_query,
+                            schema_info=MOCK_SCHEMA_JSON_STRING,
+                            sample_data=initial_state["data_sample"]
+                        )
+
+                        # 2. 验证 add_parse_error 是否被设置 (根据 parse_add_request_action 的逻辑)
+                        expected_parse_error_message = "LLM未能解析出有效的新增数据结构。"
+                        actual_add_parse_error = final_state.get("add_parse_error")
+                        print(f"DEBUG_TEST: actual_add_parse_error in test is: {actual_add_parse_error}") # Add print for test visibility
+
+                        # 3. 验证后续的正常流程节点没有被调用
+                        mock_process_output_action.assert_not_called()
+                        mock_process_placeholders_action.assert_not_called()
+                        mock_format_preview_action.assert_not_called()
+
+                        # 4. 验证流程是否导向了 handle_add_error_action 并设置了 error_flag
+                        # handle_add_error_action 应该在 _route_add_flow_on_error 检测到 add_parse_error (或特定条件) 后被调用
+                        # 它会设置 error_flag = True
+                        assert final_state.get("error_flag") is True, "error_flag should be set to True by handle_add_error_action"
+
+                        # 5. 验证 provide_add_feedback_action 生成的 final_answer
+                        # 由于 add_parse_error 未按预期传递，流程走向 handle_add_error_action，
+                        # final_answer 将是 handle_add_error_action 设置的固定消息。
+                        actual_final_answer = final_state.get("final_answer")
+                        expected_final_answer_from_handler = "这是一个来自handle_add_error的固定错误消息"
+                        assert actual_final_answer == expected_final_answer_from_handler, \
+                             f"final_answer should be from handle_add_error_action: '{expected_final_answer_from_handler}' but was '{actual_final_answer}'"
+                        
+                        # 6. 确保其他错误状态是干净的
+                        assert final_state.get("add_error_message") is None # This is for later stage errors
+                        assert final_state.get("error_message") is None # General error message, should not be set here
+
+                        print("test_add_llm_parse_request_fails PASSED SUCCESSFULLY")
