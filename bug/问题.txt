@@ -259,3 +259,69 @@ Action 节点 (`generate_select_sql_action`) 自身负责根据这个字符串�
 
 ### 状态
 问题已通过上述代码修改解决。主应用现在能够正确处理LLM直接返回意图字符串的情况。该修改也兼容了集成测试中LLM Mock返回字典的场景。
+
+## 问题报告7: 集成测试中 `extract_table_names_action` 调用服务时参数不匹配
+
+### 问题描述
+在运行 `test_query_sql_generation_fails_clarification` 集成测试时（在 `sample_data_side_effect` 问题修复后），测试在断言 `llm_preprocessing_service.extract_table_names` 服务的调用参数时失败。
+错误信息显示：
+- **期望的调用 (Expected)**: `extract_table_names(schema_data='<schema_json_string>', llm_config=<ANY>, callbacks=<ANY>)`
+- **实际的调用 (Actual)**: `extract_table_names(['<schema_json_string>'])`
+
+这表明 `extract_table_names_action` 节点（位于 `langgraph_crud_app/nodes/actions/preprocessing_actions.py`）在调用 `llm_preprocessing_service.extract_table_names` 服务时：
+1.  传递给 `schema_data` 参数的是一个包含 Schema JSON 字符串的列表 (`['<schema_json_string>']`)，而服务期望的是直接的 Schema JSON 字符串 (`'<schema_json_string>'`)。
+2.  没有传递服务所期望的 `llm_config` 和 `callbacks` 关键字参数。
+
+### 根本原因
+问题在于 `langgraph_crud_app/nodes/actions/preprocessing_actions.py` 文件中的 `extract_table_names_action` 函数的实现。该函数在从图状态中获取 `raw_schema_result` (它本身是从 `api_client.get_schema()` 返回的列表中的第一个元素，即 schema 字符串) 后，在调用 `llm_preprocessing_service.extract_table_names` 服务时，可能错误地将其再次包装在列表中，并且未能从输入 `config` 或自身状态中正确获取并传递 `llm_config` 和 `callbacks` 给服务。
+
+### 解决方案（预期）
+需要修改 `langgraph_crud_app/nodes/actions/preprocessing_actions.py` 中的 `extract_table_names_action` 函数：
+1.  确保传递给 `llm_preprocessing_service.extract_table_names` 服务的 `schema_data` 参数是实际的 Schema JSON 字符串，而不是包含该字符串的列表。
+2.  确保从该 Action 节点的输入 `config` 参数中（或者通过其他适当方式，如从 `state.get("llm_config")`）获取 LangChain 的 `llm_config` 和 `callbacks` 对象，并将它们作为关键字参数正确传递给 `llm_preprocessing_service.extract_table_names` 服务。
+
+### 状态
+问题已在集成测试 `test_query_sql_generation_fails_clarification` 中准确定位。此问题是主应用代码的缺陷。解决方案已明确，等待后续开发中对 `extract_table_names_action` 进行修复。
+
+## 问题报告8: 集成测试 `test_query_sql_execution_fails_clarification` 中出现 `TypeError` (MagicMock 比较问题) 及 Checkpointer 调整
+
+### 问题描述
+在执行集成测试用例 `test_query_sql_execution_fails_clarification` 时，当使用一个基于 `MagicMock(spec=BaseCheckpointSaver)` 的 `checkpointer` fixture 时，测试在 `compiled_app.invoke()` 阶段失败，抛出 `TypeError: '>' not supported between instances of 'MagicMock' and 'MagicMock'`。此错误发生在 LangGraph 核心的检查点（checkpointing）机制内部，具体是在 `langgraph/pregel/utils.py` 的 `get_new_channel_versions` 函数中，该函数尝试比较通道的新旧版本号。
+
+### 初步分析与诊断
+该 `TypeError` 表明 LangGraph 在尝试比较版本时，预期的可比较值（例如整数版本号）实际上是 `MagicMock` 对象。这可能由以下原因引起：
+1.  **Action 节点返回 MagicMock**: 如果图中的某个 Action 节点被 mock，并且没有为其配置 `return_value`，当该节点被意外调用时，它会默认返回一个 `MagicMock` 对象。如果这个 `MagicMock` 更新了图的状态，或者直接影响了检查点数据结构，就可能导致此问题。
+2.  **Checkpointer Mock 问题**: `checkpointer` fixture 本身是 `MagicMock`。虽然使用了 `spec=BaseCheckpointSaver`，但 `MagicMock` 在与 LangGraph 这种有复杂内部状态和序列化/反序列化逻辑的库交互时，其行为可能不够精确，导致检查点数据被 `MagicMock` 对象本身污染，尤其是在版本管理相关的内部字段（如 `channel_versions`）上。
+
+### 已采取的调试步骤与解决方案尝试
+1.  **为 Mock Action 节点设置默认返回值**:
+    *   识别到测试 `test_query_sql_execution_fails_clarification` 中 mock 了 `format_query_result_action` 节点 (`mock_format_query_result_action_node`)。
+    *   尽管此节点在该测试的预期流程中不应被调用（因为 SQL 执行会失败并走向澄清），但为防止其若被意外调用时返回 `MagicMock`，已为其添加了 `mock_format_query_result_action_node.return_value = {}`。
+    *   此修改旨在确保即使该节点被错误调用，它也会返回一个空字典（合法的状态更新），而不是 `MagicMock`。
+
+2.  **切换到真实的 Checkpointer 实现**:
+    *   为了排除 `checkpointer` 的 `MagicMock` 实现是问题根源的可能性，已修改 `text/integration_tests/test_langgraph_flows.py` 中的 `checkpointer` fixture。
+    *   移除了基于 `MagicMock` 的 `memory_saver_instance_mock`。
+    *   `checkpointer` fixture 现在直接返回一个真实的 `langgraph.checkpoint.memory.InMemorySaver()` 实例。
+
+### 当前状态与后续步骤
+在应用上述第2点修改（使用真实的 `InMemorySaver`）后，重新运行集成测试 `pytest -s text/integration_tests/test_langgraph_flows.py -k "test_query_sql_execution_fails_clarification"`，`TypeError: '>' not supported between instances of 'MagicMock' and 'MagicMock'` 错误消失。
+
+新的失败点是 `AssertionError: Expected current_intent_processed to be True (set by clarify node)`，实际值为 `None`。这表明 `handle_clarify_query_action` 节点（或后续的状态处理）未能正确地将 `current_intent_processed` 状态字段设置为 `True`。
+
+后续需要排查 `langgraph_crud_app/nodes/actions/query_actions.py` 中的 `handle_clarify_query_action` 函数，确认其返回值是否正确包含了 `{"current_intent_processed": True}`，以及检查是否有其他状态合并逻辑可能覆盖此值。
+
+## 问题报告9: `handle_add_error_action` 临时修改
+
+### 问题描述
+在调试集成测试 `test_add_db_placeholder_invalid_multiline_result` 时，为了验证 `final_answer` 状态是否能从错误处理节点正确传递，`langgraph_crud_app/nodes/actions/add_actions.py` 中的 `handle_add_error_action` 函数被临时修改。其原始的、根据实际错误信息（来自 `add_error_message` 或 `add_parse_error` 状态）动态构造用户最终错误提示的逻辑被注释掉，并替换为返回一个固定的字符串：`"这是一个来自handle_add_error的固定错误消息"`。
+
+### 当前状态
+测试 `test_add_db_placeholder_invalid_multiline_result` 在此临时修改下通过了关于 `final_answer` 的断言。
+
+### 风险与后续行动
+*   **风险**: 当前 `handle_add_error_action` 不会向用户显示实际发生的具体错误详情，而是统一显示固定的调试消息。这在生产环境中是不可接受的。
+*   **后续行动**: 
+    1.  必须将 `handle_add_error_action` 函数恢复到其原始逻辑，即根据 `state.get("add_error_message")` 或 `state.get("add_parse_error")` 来动态生成 `final_answer`。
+    2.  恢复后，需要重新验证（或调整）`test_add_db_placeholder_invalid_multiline_result` 测试用例中对 `final_answer` 内容的断言，确保它与动态生成的实际错误消息匹配。
+    3.  考虑在 `handle_add_error_action` 中对 `error_to_report` 进行更细致的处理，例如，如果错误信息过长或包含技术细节，是否应该进行一定的简化或美化再呈现给用户，而不是直接拼接。

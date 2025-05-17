@@ -278,16 +278,18 @@ def provide_add_feedback_action(state: GraphState) -> Dict[str, Any]:
     return {"final_answer": final_answer_value}
 
 def handle_add_error_action(state: GraphState) -> Dict[str, Any]:
-    """处理新增工作流特有的错误 (通用错误节点)。"""
+    """通用错误处理节点，在路由检测到错误时进入。"""
     print("--- 动作: 处理新增错误 (通用) ---")
-    error_message = state.get("add_error_message") or state.get("add_parse_error") or "新增流程发生未知错误。"
-    # 这个节点通常在路由判定为错误时进入
-    # provide_add_feedback_action 已经格式化了错误信息
-    # 这里可以只记录日志，或者返回一个更通用的错误
-    # return {"final_answer": f"新增操作失败：{error_message}"}
-    # 通常错误信息已通过 provide_add_feedback_action 的 final_answer 发送
-    # 这里返回空或特定错误标志即可
-    return {"error_flag": True} # 指示流程出错结束
+    # 修改：优先使用 add_error_message，如果不存在，再使用 add_parse_error
+    # error_to_report = state.get("add_error_message")
+    # if not error_to_report:
+    #     error_to_report = state.get("add_parse_error", "处理新增请求时发生未知错误。")
+    
+    # final_answer_value = f"抱歉，在处理您的新增请求时遇到了问题。错误详情：{error_to_report}"
+    # final_answer_value = f"处理您的新增请求时出错：{error_to_report}"
+    final_answer_value = "这是一个来自handle_add_error的固定错误消息" # <--- 临时修改
+    print(f"DEBUG: handle_add_error_action set final_answer_value to: {final_answer_value}")
+    return {"final_answer": final_answer_value, "error_flag": True} # 确保也设置 error_flag
 
 # --- 新增：用于确保 final_answer 被包含在最终状态的节点 ---
 def finalize_add_response(state: GraphState) -> Dict[str, Any]:

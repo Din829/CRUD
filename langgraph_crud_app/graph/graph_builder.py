@@ -156,6 +156,36 @@ def _route_init_step_on_error(state: GraphState) -> Literal["handle_init_error",
         return "handle_init_error"
     return "continue"
 
+def _route_after_sql_generation(state: GraphState) -> Literal["continue_to_clean_sql", "clarify_query", "clarify_analysis"]:
+    """
+    在 SQL 生成后进行路由。
+    如果生成的是澄清请求，则路由到相应的澄清处理节点。
+    否则，继续到 SQL 清理节点。
+    """
+    sql_generated_value = state.get("sql_query_generated") # 直接获取原始值
+    query_analysis_intent = state.get("query_analysis_intent", "query") # 默认为 query
+
+    # 首先检查 sql_generated_value 是否为字符串并且是 CLARIFY:
+    if isinstance(sql_generated_value, str) and sql_generated_value.strip().upper().startswith("CLARIFY:"):
+        print(f"---路由逻辑: _route_after_sql_generation - 检测到澄清请求: {sql_generated_value[:100]}... ---")
+        if query_analysis_intent == "analysis":
+            print("---路由决策: 返回 'clarify_analysis' (因为是澄清且意图是 analysis)---")
+            return "clarify_analysis"
+        else: # 默认为 query 或其他情况
+            print("---路由决策: 返回 'clarify_query' (因为是澄清且意图是 query/default)---")
+            return "clarify_query"
+    # 其次，检查 sql_generated_value 是否是一个非空字符串 (表示正常的SQL)
+    elif isinstance(sql_generated_value, str) and sql_generated_value.strip(): # 确保它不只是空字符串
+        print(f"---路由逻辑: _route_after_sql_generation - SQL生成正常，继续清理: {sql_generated_value[:100]}... ---")
+        print("---路由决策: 返回 'continue_to_clean_sql'---")
+        return "continue_to_clean_sql"
+    else:
+        # 如果 sql_generated_value 是 None, 空字符串, 或者其他非CLARIFY、非有效SQL的情况
+        # 打印时进行安全处理
+        print(f"---路由逻辑: _route_after_sql_generation - SQL生成值不是澄清，也不是有效SQL字符串 (可能是None或错误指示): '{str(sql_generated_value)[:200]}...' ---")
+        print("---路由决策: 返回 'continue_to_clean_sql' (后续节点如 clean_sql 应能处理 None/空值)---")
+        return "continue_to_clean_sql"
+
 # --- 构建图 ---
 def build_graph() -> StateGraph:
     """构建并返回 LangGraph 应用的图实例。"""
@@ -412,32 +442,48 @@ def build_graph() -> StateGraph:
         "classify_query_analysis_node",
         query_analysis_router._route_query_or_analysis,
         {
-            "query": "generate_select_sql",
-            "analysis": "generate_analysis_sql"
+            "query": "generate_select_sql",       # 确保与 add_node 一致
+            "analysis": "generate_analysis_sql" # 确保与 add_node 一致
         }
     )
 
-    # SQL 生成后直接进行清理
-    graph.add_edge("generate_select_sql", "clean_sql")
-    graph.add_edge("generate_analysis_sql", "clean_sql")
+    # 查询/分析 - SQL 生成后 (使用新的条件路由)
+    graph.add_conditional_edges(
+        "generate_select_sql", # 确保与 add_node 一致
+        _route_after_sql_generation,
+        {
+            "clarify_query": "handle_clarify_query", # 确保与 add_node 一致
+            "clarify_analysis": "handle_clarify_analysis", # 确保与 add_node 一致
+            "continue_to_clean_sql": "clean_sql" # 确保与 add_node 一致
+        }
+    )
+    graph.add_conditional_edges(
+        "generate_analysis_sql", # 确保与 add_node 一致
+        _route_after_sql_generation,
+        {
+            "clarify_query": "handle_clarify_query", # 确保与 add_node 一致
+            "clarify_analysis": "handle_clarify_analysis", # 确保与 add_node 一致
+            "continue_to_clean_sql": "clean_sql" # 确保与 add_node 一致
+        }
+    )
 
-    # 清理 SQL 后执行查询
-    graph.add_edge("clean_sql", "execute_sql_query")
+    # 查询/分析 - SQL 清理后
+    graph.add_edge("clean_sql", "execute_sql_query") # 确保与 add_node 一致
 
     # 执行 SQL 后进行路由判断
-    graph.add_edge("execute_sql_query", "route_after_query_execution")
+    graph.add_edge("execute_sql_query", "route_after_query_execution") # 确保与 add_node 一致
 
     # 根据 SQL 执行结果路由到最终处理或回复节点
     graph.add_conditional_edges(
         "route_after_query_execution",
         query_analysis_router._route_after_query_execution,
         {
-            "format_query_result": "format_query_result",
-            "analyze_analysis_result": "analyze_analysis_result",
-            "handle_query_not_found": "handle_query_not_found",
-            "handle_analysis_no_data": "handle_analysis_no_data",
-            "handle_clarify_query": "handle_clarify_query",
-            "handle_clarify_analysis": "handle_clarify_analysis"
+            "format_query_result": "format_query_result", # 确保与 add_node 一致
+            "analyze_analysis_result": "analyze_analysis_result", # 确保与 add_node 一致
+            "handle_query_not_found": "handle_query_not_found", # 确保与 add_node 一致
+            "handle_analysis_no_data": "handle_analysis_no_data", # 确保与 add_node 一致
+            "handle_clarify_query": "handle_clarify_query", # 确保与 add_node 一致
+            "handle_clarify_analysis": "handle_clarify_analysis" # 确保与 add_node 一致
         }
     )
 

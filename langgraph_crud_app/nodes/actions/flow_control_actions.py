@@ -373,7 +373,7 @@ def reset_after_operation_action(state: GraphState) -> Dict[str, Any]:
     print("---节点: 操作后重置状态---")
 
     keys_to_reset: List[str] = [
-        "save_content",
+        # "save_content", # 暂时不重置，format_operation_response_action 需要它
         # Modify related
         "content_modify",
         "modify_context_sql",

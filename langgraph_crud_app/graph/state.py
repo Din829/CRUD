@@ -89,5 +89,10 @@ class GraphState(TypedDict):
 
     # --- General ---
     final_answer: NotRequired[str]
-    # ... any other existing fields like error_flag ...
     error_flag: NotRequired[bool] # 确保这个或其他通用字段存在 
+    
+    # ---- 新增的工作流控制状态 ----
+    current_intent_processed: NotRequired[bool] # 标记当前用户意图是否已被处理（即使是要求澄清）
+
+    # ---- 用于调试和测试的辅助状态 ----
+    # ... existing code ... 

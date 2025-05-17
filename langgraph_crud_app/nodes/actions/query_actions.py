@@ -26,16 +26,39 @@ def generate_select_sql_action(state: GraphState) -> Dict[str, Any]:
         return {"final_answer": error_msg, "sql_query_generated": None, "error_message": error_msg}
     try:
         generated_sql = llm_query_service.generate_select_sql(query, schema, table_names, data_sample)
-        if generated_sql.startswith("ERROR:"):
-            print(f"LLM 请求澄清 (SELECT): {generated_sql}")
-            return {"final_answer": generated_sql, "sql_query_generated": None, "error_message": generated_sql}
+        # 如果 LLM 返回的是错误或澄清请求
+        if generated_sql.startswith("ERROR:") or generated_sql.startswith("CLARIFY:"):
+            log_prefix = "LLM 返回错误" if generated_sql.startswith("ERROR:") else "LLM 请求澄清"
+            print(f"{log_prefix} (SELECT): {generated_sql}")
+            # 对于错误和澄清，都将原始消息设置到 final_answer, sql_query_generated (用于路由), 和 error_message
+            # 并且对于澄清，也应该认为是某种形式的"流程未按预期完成"，因此设置 error_flag
+            # 意图已被处理（即使结果是澄清）
+            is_error = generated_sql.startswith("ERROR:")
+            return {
+                "final_answer": generated_sql,
+                "sql_query_generated": generated_sql, # 路由会基于此判断是否澄清
+                "error_message": generated_sql,
+                "error_flag": True, # 无论是 ERROR 还是 CLARIFY，都认为是需要特殊处理的标志
+                "current_intent_processed": True # 意图已处理
+            }
         else:
+            # 正常生成 SQL
             print(f"生成的 SELECT SQL: {generated_sql}")
-            return {"sql_query_generated": generated_sql, "error_message": None}
+            return {
+                "sql_query_generated": generated_sql, 
+                "error_message": None, 
+                "current_intent_processed": True # 意图已处理
+            }
     except Exception as e:
         error_msg = f"生成 SELECT SQL 时发生意外错误: {e}"
         print(error_msg)
-        return {"final_answer": "抱歉，生成查询时遇到问题，请稍后重试或调整您的问题。", "sql_query_generated": None, "error_message": error_msg}
+        return {
+            "final_answer": "抱歉，生成查询时遇到问题，请稍后重试或调整您的问题。", 
+            "sql_query_generated": None, 
+            "error_message": error_msg,
+            "error_flag": True, # 标记错误
+            "current_intent_processed": True # 意图已处理
+        }
 
 def generate_analysis_sql_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：调用 LLM 服务生成分析 SQL 查询。"""
@@ -47,19 +70,51 @@ def generate_analysis_sql_action(state: GraphState) -> Dict[str, Any]:
     if not schema or schema == "{}" or not table_names:
         error_msg = "无法生成分析 SQL：缺少 Schema 或表名信息。"
         print(error_msg)
-        return {"final_answer": error_msg, "sql_query_generated": None, "error_message": error_msg}
+        return {
+            "final_answer": error_msg, 
+            "sql_query_generated": None, 
+            "error_message": error_msg,
+            "error_flag": True,
+            "current_intent_processed": True
+        }
     try:
         generated_sql = llm_query_service.generate_analysis_sql(query, schema, table_names, data_sample)
         if generated_sql.startswith("ERROR:"):
+            print(f"LLM 返回错误 (分析): {generated_sql}") # Log 统一为 LLM 返回错误
+            return {
+                "final_answer": generated_sql, 
+                "sql_query_generated": None, 
+                "error_message": generated_sql,
+                "error_flag": True,
+                "current_intent_processed": True
+            }
+        # 假设分析SQL也可能返回 CLARIFY: (保持与 select 一致性)
+        elif generated_sql.startswith("CLARIFY:"):
             print(f"LLM 请求澄清 (分析): {generated_sql}")
-            return {"final_answer": generated_sql, "sql_query_generated": None, "error_message": generated_sql}
+            return {
+                "final_answer": generated_sql,
+                "sql_query_generated": generated_sql, # 澄清时 SQL query generated 包含澄清消息
+                "error_message": generated_sql,
+                "error_flag": True, # 澄清也标记为 error_flag True
+                "current_intent_processed": True
+            }
         else:
             print(f"生成的分析 SQL: {generated_sql}")
-            return {"sql_query_generated": generated_sql, "error_message": None}
+            return {
+                "sql_query_generated": generated_sql, 
+                "error_message": None,
+                "current_intent_processed": True
+            }
     except Exception as e:
         error_msg = f"生成分析 SQL 时发生意外错误: {e}"
         print(error_msg)
-        return {"final_answer": "抱歉，生成分析查询时遇到问题，请稍后重试或调整您的问题。", "sql_query_generated": None, "error_message": error_msg}
+        return {
+            "final_answer": "抱歉，生成分析查询时遇到问题，请稍后重试或调整您的问题。", 
+            "sql_query_generated": None, 
+            "error_message": error_msg,
+            "error_flag": True,
+            "current_intent_processed": True
+        }
 
 def clean_sql_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：清理生成的 SQL 语句。"""
@@ -101,7 +156,11 @@ def execute_sql_query_action(state: GraphState) -> Dict[str, Any]:
 def handle_query_not_found_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：处理查询成功但结果为空的情况。"""
     print("---节点: 处理查询未找到---")
-    return {"final_answer": "没有找到您想查找的数据，请尝试重新输入或提供更完整的编号。"}
+    return {
+        "final_answer": "没有找到您想查找的数据，请尝试重新输入或提供更完整的编号。",
+        "error_flag": True,  # 标记为一种"非成功"状态，即使不是严格的执行错误
+        "error_message": "查询成功，但未找到匹配数据。" # 提供一个内部的错误/状态信息
+    }
 
 def handle_analysis_no_data_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：处理分析成功但结果为空的情况。"""
@@ -111,14 +170,24 @@ def handle_analysis_no_data_action(state: GraphState) -> Dict[str, Any]:
 def handle_clarify_query_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：处理查询流程中需要用户澄清的情况。"""
     print("---节点: 请求澄清查询---")
-    clarification_needed = state.get("final_answer", "请澄清你的查询条件，例如提供完整编号或指定具体字段。")
-    return {"final_answer": clarification_needed}
+    current_final_answer = state.get("final_answer")
+    print(f"DEBUG: handle_clarify_query_action - current_final_answer from state: {current_final_answer}")
+    default_clarification = "请澄清你的查询条件，例如提供完整编号或指定具体字段。"
+    clarification_needed = current_final_answer if current_final_answer is not None else default_clarification
+    print(f"DEBUG: handle_clarify_query_action - clarification_needed set to: {clarification_needed}")
+    # 关键修正: 确保澄清节点也传递意图已处理的状态
+    return {
+        "final_answer": clarification_needed, 
+        "current_intent_processed": True,
+        "debug_clarify_node_executed": "YES_QUERY"
+    }
 
 def handle_clarify_analysis_action(state: GraphState) -> Dict[str, Any]:
     """节点动作：处理分析流程中需要用户澄清的情况。"""
     print("---节点: 请求澄清分析---")
     clarification_needed = state.get("final_answer", "请澄清你的分析需求，例如'统计每个部门的员工数'。")
-    return {"final_answer": clarification_needed}
+    # 关键修正: 确保澄清节点也传递意图已处理的状态
+    return {"final_answer": clarification_needed, "current_intent_processed": True}
 
 # --- 查询/分析流程 - 结果处理节点 ---
 
