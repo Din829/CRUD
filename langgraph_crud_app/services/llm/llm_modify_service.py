@@ -39,7 +39,7 @@ def parse_modify_request(
 
     if not all([schema_str, table_names, data_sample_str]):
         print("错误：缺少必要的数据库元数据 (Schema, 表名, 数据示例)。")
-        return '[]' 
+        return '[]'
 
     # 转义 JSON 数据中的大括号
     escaped_schema = _escape_json_for_prompt(schema_str)
@@ -104,7 +104,7 @@ def parse_modify_request(
 用户请求：{query}
 
 """
-    
+
 
     # 使用配置的模型
     llm = ChatOpenAI(model="gpt-4o", temperature=0.2)
@@ -136,10 +136,26 @@ def parse_modify_request(
             return "[]"
 
         try:
+            # 尝试解析 JSON
             json.loads(llm_output)
         except json.JSONDecodeError as json_err:
-            print(f"LLM 输出无法解析为 JSON: {json_err}，返回空列表。")
-            return "[]"
+            print(f"LLM 输出无法解析为 JSON: {json_err}，尝试修复特殊格式。")
+
+            # 尝试修复特殊格式
+            fixed_output = llm_output
+            # 替换 {"now()"} 为 "NOW()"
+            fixed_output = re.sub(r'{"now\(\)"}', '"NOW()"', fixed_output)
+            # 替换其他可能的函数调用格式
+            fixed_output = re.sub(r'{"\s*([^"]+\(\))\s*"}', r'"\1"', fixed_output)
+
+            # 尝试解析修复后的 JSON
+            try:
+                json.loads(fixed_output)
+                print(f"成功修复 JSON 格式问题。")
+                return fixed_output
+            except json.JSONDecodeError as e:
+                print(f"修复后仍无法解析 JSON: {e}，返回空列表。")
+                return "[]"
 
         return llm_output
 
@@ -150,7 +166,7 @@ def parse_modify_request(
 
 # --- 错误格式化服务 (可选) ---
 
-# 将在此处添加 format_modify_error 函数 (如果需要) 
+# 将在此处添加 format_modify_error 函数 (如果需要)
 
 
 # --- 新增：用于获取修改上下文的 SQL 生成服务 ---
@@ -218,7 +234,7 @@ def generate_modify_context_sql(
         sql_query = ""
         # 尝试用正则表达式查找 ```sql ... ``` 块
         sql_match = re.search(r"```sql\s*(.*?)\s*```", llm_output, re.DOTALL | re.IGNORECASE)
-        
+
         if sql_match:
             sql_query = sql_match.group(1).strip()
             print(f"通过 Regex 提取到 SQL: {sql_query}")
@@ -230,7 +246,7 @@ def generate_modify_context_sql(
             if cleaned_output.endswith("```"):
                  cleaned_output = cleaned_output[:-3]
             cleaned_output = cleaned_output.strip()
-            
+
             # 检查后备方案是否看起来像 SQL
             if cleaned_output.upper().startswith("SELECT"):
                  print("警告：未找到 ```sql 块，尝试使用清理后的整个输出作为 SQL。")
@@ -241,18 +257,18 @@ def generate_modify_context_sql(
 
         # 进一步清理，移除潜在的换行符和多余空格
         sql_query = ' '.join(sql_query.split()).strip()
-        
+
         # 基本检查 SQL 合法性 (仅检查是否以 SELECT 开头)
         if not sql_query.upper().startswith("SELECT"):
             print("提取或处理后的结果不是有效的 SELECT 语句。")
             return ""
-        
+
         print(f"LLM 生成上下文 SQL (最终提取): {sql_query}")
         return sql_query
 
     except Exception as e:
         print(f"LLM 生成上下文 SQL 失败: {e}")
-        return "" 
+        return ""
 
 # --- 新增：检查直接修改 ID 意图的函数 ---
 
@@ -301,7 +317,7 @@ def check_for_direct_id_modification_intent(query: str) -> Optional[str]:
         ])
         response = llm.invoke(prompt.format_prompt(query=query).to_messages())
         llm_output = response.content.strip()
-        
+
         # 分析 LLM 的响应
         if llm_output and "DETECTED" in llm_output.upper(): # 使用 .upper() 增加鲁棒性
             print(f"LLM 检测到修改 ID 意图，查询: '{query}', 响应: '{llm_output}'")
@@ -310,9 +326,9 @@ def check_for_direct_id_modification_intent(query: str) -> Optional[str]:
             # 如果响应不是 "DETECTED"，或者为空，或者发生任何意外，都视为安全，允许流程继续
             print(f"LLM 未检测到修改 ID 意图或响应无效，查询: '{query}', 响应: '{llm_output}'")
             return None
-            
+
     except Exception as e:
         # 处理 LLM 调用过程中可能发生的异常
         print(f"调用 LLM 检查修改 ID 意图时发生错误: {e}")
         # 保守起见，如果检查失败，允许流程继续，并打印错误
-        return None 
+        return None

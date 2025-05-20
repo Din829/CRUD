@@ -69,28 +69,28 @@ def clean_delete_sql_action(state: GraphState) -> Dict[str, Any]:
     try:
         sql_to_clean = state["delete_preview_sql"]
         print(f"--- 原始SQL (长度: {len(sql_to_clean)}): {sql_to_clean[:100]}... ---")
-        
+
         # 基本清理
         cleaned_sql = data_processor.clean_sql_string(sql_to_clean)
-        
+
         # 额外的MySQL语法错误预防措施
         # 1. 移除所有尾部分号（API会自动添加）
         cleaned_sql = cleaned_sql.strip()
         while cleaned_sql.endswith(';'):
             cleaned_sql = cleaned_sql[:-1].strip()
-            
+
         # 2. 检查SQL是否为空
         if not cleaned_sql:
             print("--- 警告: 清理后的SQL为空 ---")
             error_msg = "清理后的SQL语句为空，无法执行查询"
             return {error_key: error_msg, "delete_preview_sql": None}
-            
+
         # 3. 确保是SELECT语句
         if not cleaned_sql.upper().startswith("SELECT"):
             print(f"--- 警告: 清理后的SQL不是SELECT语句: {cleaned_sql[:100]}... ---")
             error_msg = f"生成的SQL不是SELECT语句，无法安全执行: {cleaned_sql[:100]}..."
             return {error_key: error_msg, "delete_preview_sql": None}
-        
+
         # 4. 复杂查询检查: 确保UNION ALL语句完整
         if " UNION ALL " in cleaned_sql.upper():
             parts = cleaned_sql.upper().split(" UNION ALL ")
@@ -102,25 +102,25 @@ def clean_delete_sql_action(state: GraphState) -> Dict[str, Any]:
                         cleaned_sql = " UNION ALL ".join(parts[:i])
                         print(f"--- 修复后的SQL (长度: {len(cleaned_sql)}): {cleaned_sql[:100]}... ---")
                         break
-        
+
         # 5. 检查SQL是否被截断，特别关注WHERE子句
         # where_match = re.search(r'\bWHERE\b\s+([^)]{1,50})$', cleaned_sql, re.IGNORECASE)
         # if where_match:
         #     print(f"--- 警告: SQL可能在WHERE子句处被截断: '{where_match.group(0)}' ---")
         #     error_msg = "SQL语句似乎被截断，请简化查询条件"
         #     return {error_key: error_msg, "delete_preview_sql": None}
-            
+
         # 6. 括号平衡检查
         if not data_processor.is_sql_part_balanced(cleaned_sql):
             print("--- 警告: SQL括号不平衡，可能被截断 ---")
             error_msg = "SQL语句括号不匹配，可能结构不完整"
             return {error_key: error_msg, "delete_preview_sql": None}
-        
+
         # 记录完整的清理后SQL，不截断
         print(f"--- SQL清理完成，长度: {len(cleaned_sql)} ---")
         print("--- 清理后SQL的前100个字符: " + cleaned_sql[:100] + "... ---")
         print("--- 清理后SQL的最后100个字符: ..." + cleaned_sql[-100:] + " ---")
-        
+
         return {error_key: None, "delete_preview_sql": cleaned_sql}
     except Exception as e:
         print(f"ERROR in clean_delete_sql_action: {e}")
@@ -141,18 +141,18 @@ def execute_delete_preview_sql_action(state: GraphState) -> Dict[str, Any]:
 
     try:
         sql_query = state["delete_preview_sql"]
-        
+
         # 执行SQL前的额外安全检查
         if not sql_query or sql_query.isspace():
             print("--- SQL为空，无法执行 ---")
             return {error_key: "生成的SQL查询为空，无法执行"}
-            
+
         if not sql_query.upper().startswith("SELECT"):
             print(f"--- SQL不是SELECT语句: {sql_query} ---")
             return {error_key: f"生成的SQL不是SELECT语句，无法安全执行: {sql_query}"}
-            
+
         print(f"--- 执行 SQL: {sql_query} ---")
-        
+
         try:
             result_json_str = api_client.execute_query(sql_query)
             print(f"--- 预览查询结果 (JSON): {result_json_str} ---")
@@ -160,7 +160,7 @@ def execute_delete_preview_sql_action(state: GraphState) -> Dict[str, Any]:
             # 处理SQL执行错误
             error_message = str(sql_error)
             print(f"--- SQL执行失败: {error_message} ---")
-            
+
             # 根据错误类型提供更友好的错误消息
             if "1064" in error_message:  # MySQL语法错误代码
                 return {error_key: f"SQL语法错误，请尝试简化查询条件: {error_message}"}
@@ -168,18 +168,18 @@ def execute_delete_preview_sql_action(state: GraphState) -> Dict[str, Any]:
                 return {error_key: f"查询引用了不存在的表或字段: {error_message}"}
             else:
                 return {error_key: f"执行查询时出错: {error_message}"}
-        
+
         # 检查结果是否为空列表
         if result_json_str.strip() == '[]':
             print("--- 查询结果为空列表，将继续流程但标记未找到记录 ---")
             # 更新状态以确保下游格式化步骤可以正确处理空结果
             return {
-                error_key: None, 
+                error_key: None,
                 "delete_show": result_json_str,
-                "delete_preview_text": "未找到需要删除的记录。", 
-                "content_delete": "未找到需要删除的记录。" 
+                "delete_preview_text": "未找到需要删除的记录。",
+                "content_delete": "未找到需要删除的记录。"
             }
-            
+
         # 正常非空结果
         return {error_key: None, "delete_show": result_json_str}
 
@@ -194,7 +194,7 @@ def format_delete_preview_action(state: GraphState) -> Dict[str, Any]:
     """动作节点：调用 LLM 格式化删除预览文本。"""
     print("--- 动作: 格式化删除预览 ---")
     error_key = "delete_error_message"
-    
+
     # 如果已经在执行预览SQL步骤设置了删除预览文本（通常是未找到记录的情况），则直接使用
     if state.get("delete_preview_text") == "未找到需要删除的记录。":
         print("--- 使用已设置的'未找到记录'预览文本 ---")
@@ -203,11 +203,11 @@ def format_delete_preview_action(state: GraphState) -> Dict[str, Any]:
             "delete_preview_text": "未找到需要删除的记录。",
             "content_delete": "未找到需要删除的记录。"
         }
-    
+
     if state.get(error_key):
         print("--- 跳过格式化预览，因存在错误 ---")
         return {}
-        
+
     # 检查 delete_show 是否存在且有效 (可能 API 调用失败返回 None)
     delete_show_json = state.get("delete_show")
     if delete_show_json is None:
@@ -292,15 +292,20 @@ def provide_delete_feedback_action(state: GraphState) -> Dict[str, Any]:
 def handle_delete_error_action(state: GraphState) -> Dict[str, Any]:
     """动作节点：处理删除流程中的通用错误。"""
     print("--- 动作: 处理删除流程错误 ---")
-    # 这个节点主要用于路由，实际的错误信息应该已经在 provide_delete_feedback_action 中准备好了
-    # 可以在这里记录详细错误日志或设置错误标志
+    # 获取错误信息
     error_message = state.get("delete_error_message") or "删除流程发生未知错误。"
     print(f"捕获到删除流程错误: {error_message}")
-    return {"error_flag": True} # 设置错误标志
+
+    # 构建友好的错误消息
+    final_answer = f"抱歉，处理您的删除请求时遇到问题：\n{error_message}"
+    print(f"错误处理生成的最终回复: {final_answer}")
+
+    # 返回错误标志和最终回复
+    return {"error_flag": True, "final_answer": final_answer}
 
 
 def finalize_delete_response(state: GraphState) -> Dict[str, Any]:
     """空节点，确保删除流程反馈节点的输出被合并到最终状态。"""
     print("--- 节点: 结束删除反馈流程 ---")
     # 无需操作，仅用于图连接
-    return {} 
+    return {}

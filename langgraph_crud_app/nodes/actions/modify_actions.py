@@ -5,6 +5,7 @@
 from typing import Dict, Any
 import json
 import logging # 导入 logging 模块
+import re  # 导入正则表达式模块
 
 # 导入状态定义和服务
 from langgraph_crud_app.graph.state import GraphState
@@ -35,11 +36,11 @@ def generate_modify_context_sql_action(state: GraphState) -> Dict[str, Any]:
             logger.warning(f"拒绝操作：LLM 检测到用户查询 '{query}' 包含明确修改 ID 的意图。")
             # 直接返回错误，阻止后续流程
             return {
-                "final_answer": rejection_message, 
+                "final_answer": rejection_message,
                 "error_message": "Explicit ID change intent detected by LLM and rejected.", # 内部错误标记
                 "modify_context_sql": None # 确保不执行后续SQL
             }
-        
+
         # 如果没有被拒绝，则继续正常流程
         logger.info("LLM 未检测到明确修改 ID 的意图，继续生成上下文 SQL。")
 
@@ -50,7 +51,7 @@ def generate_modify_context_sql_action(state: GraphState) -> Dict[str, Any]:
         # 出现检查错误时，为保守起见，可以选择阻止流程或允许流程继续（带警告）
         # 这里选择阻止流程，返回错误给用户
         return {
-            "error_message": error_msg, 
+            "error_message": error_msg,
             "final_answer": "抱歉，在分析您的请求意图时遇到内部错误，无法继续处理。",
             "modify_context_sql": None
         }
@@ -100,13 +101,14 @@ def execute_modify_context_sql_action(state: GraphState) -> Dict[str, Any]:
     logger.info("---节点: 执行修改上下文查询 SQL---")
     context_sql = state.get("modify_context_sql")
     error_message = state.get("error_message") # 保留上一步可能设置的错误
+    user_query = state.get("user_query", "")
 
     # 如果上一步生成 SQL 就失败了，直接返回
     if error_message or not context_sql:
         logger.info("上一步生成上下文 SQL 失败或出错，跳过执行。")
         # 注意：这里不应清除 error_message，如果它已设置
         # 如果 context_sql 为空但没错误（LLM 返回澄清），则上一步已设置 final_answer
-        return {"modify_context_result": None} 
+        return {"modify_context_result": None}
 
     try:
         # 调用 API Client 执行查询
@@ -115,10 +117,24 @@ def execute_modify_context_sql_action(state: GraphState) -> Dict[str, Any]:
         logger.info(f"上下文查询结果: {query_result_str}")
 
         # 检查返回结果是否表示未找到数据 (例如，返回 '[]')
-        # 即使查不到数据，对于修改流程也可能是有用的信息 (例如，记录不存在)
-        # 因此，我们存储结果，但不将其视为错误。
-        # if not query_result_str or query_result_str.strip() == '[]':
-        #     print("上下文查询未返回任何数据。")
+        if query_result_str.strip() == '[]':
+            logger.info("上下文查询未返回任何数据，可能是记录不存在。")
+
+            # 尝试从用户查询中提取实体名称
+            import re
+            entity_match = re.search(r"['\"]([^'\"]+)['\"]", user_query)
+            entity_name = entity_match.group(1) if entity_match else "请求的记录"
+
+            # 提供友好的错误消息
+            error_msg = f"未找到{entity_name}。请检查名称是否正确，或者该记录是否存在。"
+            logger.warning(error_msg)
+
+            # 设置最终回复和错误消息
+            return {
+                "final_answer": f"抱歉，{error_msg}",
+                "error_message": error_msg,
+                "modify_context_result": query_result_str
+            }
 
         # 清除可能从上一步传递过来的错误（如果执行成功）
         return {"modify_context_result": query_result_str, "error_message": None}
@@ -135,7 +151,7 @@ def parse_modify_request_action(state: GraphState) -> Dict[str, Any]:
     """
     节点动作：调用 LLM 服务解析用户的修改请求，利用上下文查询结果。
     """
-    logger.info("---节点: 解析修改请求--- marginalised")
+    logger.info("---节点: 解析修改请求---")
     query = state.get("user_query", "")
     schema = state.get("biaojiegou_save")
     tables = state.get("table_names")
@@ -148,7 +164,7 @@ def parse_modify_request_action(state: GraphState) -> Dict[str, Any]:
     if error_message:
         logger.info(f"上一步骤 (执行上下文查询) 存在错误: {error_message}")
         return {"error_message": error_message, "raw_modify_llm_output": None}
-    
+
     # 检查必需的元数据是否存在 (上下文结果是可选的，没有它 LLM 也能尝试处理简单情况)
     if not all([schema, tables, sample]):
         error_msg = "解析修改请求失败：缺少数据库元数据 (Schema, Tables, Sample)。请确保初始化流程已成功运行。"
@@ -164,16 +180,32 @@ def parse_modify_request_action(state: GraphState) -> Dict[str, Any]:
             data_sample_str=sample,
             modify_context_result_str=context_result # 传递上下文结果
         )
+
+        # 预处理 LLM 输出，处理特殊格式如 {"now()"}
+        if llm_output_str and llm_output_str != '[]':
+            # 替换 {"now()"} 为 "NOW()"
+            llm_output_str = re.sub(r'{"now\(\)"}', '"NOW()"', llm_output_str)
+            # 替换其他可能的函数调用格式
+            llm_output_str = re.sub(r'{"\s*([^"]+\(\))\s*"}', r'"\1"', llm_output_str)
+
+            # 尝试验证 JSON 格式
+            try:
+                json.loads(llm_output_str)
+                logger.info(f"LLM 解析原始输出 (带上下文，已处理特殊格式): {llm_output_str}")
+            except json.JSONDecodeError as e:
+                logger.warning(f"处理后的 LLM 输出仍然无法解析为 JSON: {e}")
+                llm_output_str = '[]'  # 如果仍然无法解析，设置为空列表
+
         logger.info(f"LLM 解析原始输出 (带上下文): {llm_output_str}")
 
         # 检查 LLM 是否返回了空列表字符串或其他表示失败的标记
         if llm_output_str.strip() == '[]' or not llm_output_str.strip():
-             # 如果 LLM 明确表示无法解析，则认为这不是一个运行时错误，而是一个需要用户澄清的情况
-             clarification_msg = "抱歉，我无法完全理解您的修改请求。请提供更具体的信息，例如要修改哪个表、哪条记录（使用主键），以及要修改哪些字段和新值。"
-             logger.info(clarification_msg)
-             # 注意：这里我们不设置 error_message，而是设置 final_answer 让流程直接结束并回复用户
-             # 这样做可以避免进入后续的错误处理流程，直接请求用户澄清
-             return {"final_answer": clarification_msg, "raw_modify_llm_output": None}
+            # 如果 LLM 明确表示无法解析，则认为这不是一个运行时错误，而是一个需要用户澄清的情况
+            clarification_msg = "抱歉，我无法完全理解您的修改请求。请提供更具体的信息，例如要修改哪个表、哪条记录（使用主键），以及要修改哪些字段和新值。"
+            logger.info(clarification_msg)
+            # 注意：这里我们不设置 error_message，而是设置 final_answer 让流程直接结束并回复用户
+            # 这样做可以避免进入后续的错误处理流程，直接请求用户澄清
+            return {"final_answer": clarification_msg, "raw_modify_llm_output": None}
 
         # 成功解析，存储原始 LLM 输出，清除错误信息
         return {"raw_modify_llm_output": llm_output_str, "error_message": None}
@@ -206,8 +238,15 @@ def validate_and_store_modification_action(state: GraphState) -> Dict[str, Any]:
         return {}
 
     try:
-        # 尝试解析 JSON 以确保格式基本正确
-        llm_parsed_data = json.loads(raw_output)
+        # 预处理 JSON 字符串，处理特殊格式如 {"now()"}
+        processed_output = raw_output
+        # 替换 {"now()"} 为 "NOW()"
+        processed_output = re.sub(r'{"now\(\)"}', '"NOW()"', processed_output)
+        # 替换其他可能的函数调用格式
+        processed_output = re.sub(r'{"\s*([^"]+\(\))\s*"}', r'"\1"', processed_output)
+
+        # 尝试解析处理后的 JSON
+        llm_parsed_data = json.loads(processed_output)
         logger.info("LLM 输出 JSON 格式有效。")
 
         # --- 新增：转换 LLM 输出为 API 负载格式 (List[Dict]) ---
@@ -236,10 +275,10 @@ def validate_and_store_modification_action(state: GraphState) -> Dict[str, Any]:
                      logger.warning(f"LLM 输出中表 '{table_name}' 的值不是列表: {operations}")
         else:
             raise ValueError("LLM 解析出的数据不是预期的字典格式。")
-        
+
         if not api_payload:
              raise ValueError("未能从 LLM 输出中成功转换出任何有效的 API 修改操作。")
-        
+
         logger.info(f"成功转换 API 负载: {api_payload}")
         # --- 转换结束 ---
 
@@ -274,14 +313,12 @@ def handle_modify_error_action(state: GraphState) -> Dict[str, Any]:
     """
     节点动作：处理修改流程中发生的错误。
     """
-    logger.info("---节点: 处理修改流程错误--- marginalised")
+    logger.info("---节点: 处理修改流程错误---")
     error_message = state.get("error_message", "发生未知错误")
 
-    # TODO (可选): 调用 LLM 服务 format_modify_error 来美化错误信息
-    # formatted_error = llm_modify_service.format_modify_error(error_message)
-    # final_answer = formatted_error
-
-    final_answer = f"处理您的修改请求时遇到问题：\n{error_message}"
+    # 构建友好的错误消息
+    final_answer = f"抱歉，处理您的修改请求时遇到问题：\n{error_message}"
+    logger.info(f"错误处理生成的最终回复: {final_answer}")
 
     return {"final_answer": final_answer}
 
@@ -291,13 +328,25 @@ def provide_modify_feedback_action(state: GraphState) -> Dict[str, Any]:
     节点动作：向用户反馈已准备好的修改内容，并提示进行保存确认。
     对应 Dify Answer 节点: '1742440037542'
     """
-    logger.info("---节点: 提供修改反馈--- marginalised")
-    content_modify = state.get("content_modify", "[错误：未找到已准备的修改内容]")
+    logger.info("---节点: 提供修改反馈---")
+    content_modify = state.get("content_modify")
 
-    #TODO: 可以在这里添加对 content_modify 的美化逻辑，如果需要的话
-    # formatted_content = _format_json_for_display(content_modify)
+    # 检查 content_modify 是否为 None 或空
+    if not content_modify:
+        error_msg = "无法生成修改预览，可能是解析失败或未找到匹配记录。请尝试提供更明确的修改信息。"
+        logger.warning(error_msg)
+        return {"final_answer": f"抱歉，{error_msg}", "error_flag": True}
 
-    final_answer = f"已准备好以下修改内容，请发送'保存'进行最终确认：\n\n{content_modify}"
+    # 美化 JSON 显示
+    try:
+        # 尝试解析 JSON 并美化显示
+        parsed_content = json.loads(content_modify)
+        formatted_content = json.dumps(parsed_content, indent=2, ensure_ascii=False)
+    except:
+        # 如果解析失败，使用原始内容
+        formatted_content = content_modify
+
+    final_answer = f"已准备好以下修改内容，请发送'保存'进行最终确认：\n\n{formatted_content}"
 
     return {"final_answer": final_answer}
 
@@ -316,4 +365,4 @@ def provide_modify_feedback_action(state: GraphState) -> Dict[str, Any]:
 
 # 将在此处添加 handle_modify_error_action 函数
 
-# 将在此处添加 provide_modify_feedback_action 函数 
+# 将在此处添加 provide_modify_feedback_action 函数

@@ -72,11 +72,11 @@ def process_add_llm_output_action(state: GraphState) -> Dict[str, Any]:
     except ValueError as ve:
          print(f"ERROR in process_add_llm_output_action (ValueError): {ve}")
          # 出错时，清空字符串状态
-         return {"add_error_message": str(ve), "add_structured_records_str": None} 
+         return {"add_error_message": str(ve), "add_structured_records_str": None}
     except Exception as e:
         print(f"ERROR in process_add_llm_output_action: {e}")
         # 出错时，清空字符串状态
-        return {"add_error_message": f"处理LLM输出失败: {str(e)}", "add_structured_records_str": None} 
+        return {"add_error_message": f"处理LLM输出失败: {str(e)}", "add_structured_records_str": None}
 
 def process_placeholders_action(state: GraphState) -> Dict[str, Any]:
     """
@@ -90,10 +90,10 @@ def process_placeholders_action(state: GraphState) -> Dict[str, Any]:
         包含处理后记录的字典。
     """
     print("--- 节点: 处理占位符 ({{...}} format) ---")
-    # --- 新增：打印完整状态 --- 
+    # --- 新增：打印完整状态 ---
     print(f"节点入口接收到的完整状态: {state}")
     # --- END 新增 ---
-    
+
     # 检查前序步骤是否有错误
     if state.get("add_parse_error") or state.get("add_error_message"):
         print("--- 跳过处理占位符，因为前序步骤出错 ---")
@@ -101,7 +101,7 @@ def process_placeholders_action(state: GraphState) -> Dict[str, Any]:
 
     # 读取 JSON 字符串状态
     records_json_str = state.get("add_structured_records_str")
-    
+
     # structured_records = state.get("add_structured_records") # 不再直接读取这个
 
     structured_records = None # 初始化
@@ -117,7 +117,7 @@ def process_placeholders_action(state: GraphState) -> Dict[str, Any]:
         except ValueError as ve:
              print(f"--- 解析后的结构化记录格式错误: {ve} --- JSON: '{records_json_str}'")
              return {"add_error_message": f"解析后的结构化记录格式错误: {ve}"}
-    
+
     # 检查解析结果或原始字符串是否存在
     if structured_records is None:
          print("--- 无法处理占位符：结构化记录 JSON 字符串为空或解析失败 ---")
@@ -141,18 +141,18 @@ def process_placeholders_action(state: GraphState) -> Dict[str, Any]:
             processed_records_json_str = json.dumps(processed_records, ensure_ascii=False)
         except TypeError as te:
             raise ValueError(f"无法将处理后的记录序列化为 JSON: {te}")
-        
+
         # 更新 _str 字段，清除错误
         return {"add_processed_records_str": processed_records_json_str, "add_error_message": None}
 
-    except ValueError as ve: 
+    except ValueError as ve:
         print(f"ERROR in process_placeholders_action (ValueError): {ve}")
         # 出错时，清空字符串状态
-        return {"add_error_message": str(ve), "add_processed_records_str": None} 
+        return {"add_error_message": str(ve), "add_processed_records_str": None}
     except Exception as e:
         print(f"ERROR in process_placeholders_action: {e}")
         # 出错时，清空字符串状态
-        return {"add_error_message": f"处理占位符时发生意外错误: {str(e)}", "add_processed_records_str": None} 
+        return {"add_error_message": f"处理占位符时发生意外错误: {str(e)}", "add_processed_records_str": None}
 
 def format_add_preview_action(state: GraphState) -> Dict[str, Any]:
     """
@@ -169,7 +169,7 @@ def format_add_preview_action(state: GraphState) -> Dict[str, Any]:
     current_error = state.get("add_parse_error") or state.get("add_error_message")
     if current_error:
         print(f"--- 跳过格式化预览，因为前序步骤出错: {current_error} ---")
-        return {} 
+        return {}
 
     # 从 _str 字段读取状态
     processed_records_json_str = state.get("add_processed_records_str")
@@ -184,20 +184,20 @@ def format_add_preview_action(state: GraphState) -> Dict[str, Any]:
             print(f"--- 从 JSON 字符串成功解析已处理记录: {processed_records} ---")
         except json.JSONDecodeError as e:
             print(f"--- 无法解析已处理记录 JSON 字符串: {e} --- JSON: '{processed_records_json_str}'")
-            return {"add_error_message": f"无法解析已处理记录 JSON 字符串: {e}"} 
+            return {"add_error_message": f"无法解析已处理记录 JSON 字符串: {e}"}
         except ValueError as ve:
             print(f"--- 解析后的已处理记录格式错误: {ve} --- JSON: '{processed_records_json_str}'")
-            return {"add_error_message": f"解析后的已处理记录格式错误: {ve}"} 
-    
+            return {"add_error_message": f"解析后的已处理记录格式错误: {ve}"}
+
     # 检查解析结果
     if processed_records is None:
          print(f"--- 无法生成预览：已处理记录 JSON 字符串为空或解析失败 ---")
          return {"add_error_message": "已处理记录丢失或无效，无法生成预览。"}
-    elif not processed_records: 
+    elif not processed_records:
          print("--- 没有处理后的记录可供预览 (列表为空) ---")
          return {"add_preview_text": "根据您的输入，没有解析到需要新增的数据。"}
 
-    # --- 后续逻辑使用解析后的 processed_records --- 
+    # --- 后续逻辑使用解析后的 processed_records ---
     query = state["user_query"]
     # schema = state["db_schema"] # db_schema 似乎未在 state 中定义，暂时使用 biaojiegou_save
     schema_str = state.get("biaojiegou_save")
@@ -212,7 +212,7 @@ def format_add_preview_action(state: GraphState) -> Dict[str, Any]:
 
     # 调用 LLM 服务生成预览 (使用解析后的 processed_records)
     try:
-        records_by_table = {} 
+        records_by_table = {}
         for record in processed_records:
             table_name = record.get("table_name")
             if table_name:
@@ -229,7 +229,7 @@ def format_add_preview_action(state: GraphState) -> Dict[str, Any]:
                query=query,
                schema=schema_str, # 使用 schema_str
                table_names=list(records_by_table.keys()),
-               processed_records=records_by_table 
+               processed_records=records_by_table
             )
 
         # 存储预览文本到 add_preview_text 和 content_new，同时存储处理后的数据到 lastest_content_production
@@ -258,7 +258,7 @@ def provide_add_feedback_action(state: GraphState) -> Dict[str, Any]:
     """动作节点：向用户提供生成的新增预览或错误信息。"""
     print("--- 动作: 提供新增反馈 ---")
     # 检查所有可能的错误状态
-    parse_error = state.get("add_parse_error") 
+    parse_error = state.get("add_parse_error")
     processing_error = state.get("add_error_message")
     preview = state.get("add_preview_text")
 
@@ -267,7 +267,7 @@ def provide_add_feedback_action(state: GraphState) -> Dict[str, Any]:
         final_answer_value = f"抱歉，无法解析您的新增请求：\n{parse_error}"
     elif processing_error:
         final_answer_value = f"抱歉，处理您的新增请求时出错：\n{processing_error}"
-        if preview: 
+        if preview:
              final_answer_value += f"\n\n预览（可能有误）：\n{preview}"
     elif preview:
         final_answer_value = f"{preview}\n\n请输入 '保存' 以确认新增，或输入 '重置' 取消。"
@@ -280,14 +280,13 @@ def provide_add_feedback_action(state: GraphState) -> Dict[str, Any]:
 def handle_add_error_action(state: GraphState) -> Dict[str, Any]:
     """通用错误处理节点，在路由检测到错误时进入。"""
     print("--- 动作: 处理新增错误 (通用) ---")
-    # 修改：优先使用 add_error_message，如果不存在，再使用 add_parse_error
-    # error_to_report = state.get("add_error_message")
-    # if not error_to_report:
-    #     error_to_report = state.get("add_parse_error", "处理新增请求时发生未知错误。")
-    
-    # final_answer_value = f"抱歉，在处理您的新增请求时遇到了问题。错误详情：{error_to_report}"
-    # final_answer_value = f"处理您的新增请求时出错：{error_to_report}"
-    final_answer_value = "这是一个来自handle_add_error的固定错误消息" # <--- 临时修改
+    # 优先使用 add_error_message，如果不存在，再使用 add_parse_error
+    error_to_report = state.get("add_error_message")
+    if not error_to_report:
+        error_to_report = state.get("add_parse_error", "处理新增请求时发生未知错误。")
+
+    # 构建友好的错误消息
+    final_answer_value = f"抱歉，处理您的新增请求时出错：{error_to_report}"
     print(f"DEBUG: handle_add_error_action set final_answer_value to: {final_answer_value}")
     return {"final_answer": final_answer_value, "error_flag": True} # 确保也设置 error_flag
 

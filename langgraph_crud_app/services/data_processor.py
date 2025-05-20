@@ -7,28 +7,28 @@ import random
 import string
 import uuid # Add uuid import for random UUID generation
 # Import API client for placeholder resolution
-from .api_client import execute_query 
+from .api_client import execute_query
 
 def is_sql_part_balanced(sql_part: str) -> bool:
     """
     检查SQL片段中的括号是否平衡。
-    
+
     Args:
         sql_part: SQL片段
-        
+
     Returns:
         如果括号平衡返回True，否则返回False
     """
     stack = []
     bracket_pairs = {')': '(', '}': '{', ']': '['}
-    
+
     for char in sql_part:
         if char in '({[':
             stack.append(char)
         elif char in ')}]':
             if not stack or stack.pop() != bracket_pairs[char]:
                 return False
-    
+
     return len(stack) == 0  # 栈为空表示所有括号都匹配
 
 def nl_string_to_list(names_str: str) -> List[str]:
@@ -64,53 +64,53 @@ def clean_sql_string(sql: str) -> str:
     """
     if not sql:
         return ""
-        
+
     # 记录原始SQL长度
     original_length = len(sql)
     print(f"--- 清理SQL前长度: {original_length} ---")
-    
+
     # 移除常见的 Markdown 代码块标记
     cleaned_sql = re.sub(r'^```sql\s*', '', sql, flags=re.IGNORECASE)
     cleaned_sql = re.sub(r'^```mysql\s*', '', cleaned_sql, flags=re.IGNORECASE)
     cleaned_sql = re.sub(r'\s*```$', '', cleaned_sql)
-    
+
     # 移除可能存在的前后空白符
     cleaned_sql = cleaned_sql.strip()
-    
+
     # 不执行空白字符替换，保留原始格式
     # 只合并连续的多个空格为一个空格，保留换行和缩进
     # cleaned_sql = re.sub(r' {2,}', ' ', cleaned_sql)
-    
+
     # 清理SQL注释，但保留其他所有内容
     cleaned_sql = re.sub(r'--.*?$', '', cleaned_sql, flags=re.MULTILINE)
     cleaned_sql = re.sub(r'/\*.*?\*/', '', cleaned_sql, flags=re.DOTALL)
-    
+
     # 再次清理前后空白，但保留内部结构
     cleaned_sql = cleaned_sql.strip()
-    
+
     # 处理分号问题，确保SQL有一个结尾分号
     has_semicolon = cleaned_sql.endswith(';')
     if not has_semicolon:
         cleaned_sql = cleaned_sql + ';'
         print("--- 为SQL添加了分号 ---")
-    
+
     # 检查括号是否平衡，但不修改SQL内容
     if not is_sql_part_balanced(cleaned_sql):
         print("--- 警告: SQL括号不平衡，可能导致语法错误 ---")
-    
+
     # 最终检查：确保SQL是以SELECT开头，但不修改
     if not cleaned_sql.upper().strip().startswith('SELECT'):
         print(f"--- 警告：清理后的SQL不是以SELECT开头: {cleaned_sql[:50]}... ---")
-    
+
     # 检查WHERE子句是否存在且看起来完整
     where_match = re.search(r'\bWHERE\b\s+([^)]{1,50})$', cleaned_sql, re.IGNORECASE)
     if where_match:
         print(f"--- 警告: SQL可能在WHERE子句处不完整: '{where_match.group(0)}' ---")
-    
+
     # 记录清理后的长度变化
     final_length = len(cleaned_sql)
     print(f"--- 清理SQL后长度: {final_length} (减少了 {original_length - final_length} 个字符) ---")
-    
+
     return cleaned_sql
 
 def is_query_result_empty(result_str: Optional[str]) -> bool:
@@ -139,7 +139,7 @@ def is_query_result_empty(result_str: Optional[str]) -> bool:
         # 如果 JSON 无效，也视为空结果
         print(f"警告：无法解析查询结果 JSON 字符串 '{result_str}'，视为空结果。")
         return True
-    return False 
+    return False
 
 # === 新增流程处理函数 ===
 
@@ -301,15 +301,15 @@ def process_placeholders(structured_records: List[Dict[str, Any]]) -> List[Dict[
                 if match:
                     placeholder_content = match.group(1).strip()
                     print(f"  正在解析占位符: '{placeholder_content}' for field '{field}'")
-                    
-                    # --- 新增：忽略 {{new(...)}} --- 
+
+                    # --- 新增：忽略 {{new(...)}} ---
                     if placeholder_content.lower().startswith("new("):
                          print(f"    忽略占位符 new(): '{placeholder_content}'")
                          processed_fields[field] = value # 保留原始值 {{new(...)}}
                          continue # 处理下一个字段
-                    # --- 结束新增 --- 
+                    # --- 结束新增 ---
 
-                    # 处理 {{db(...)}} 
+                    # 处理 {{db(...)}}
                     if placeholder_content.lower().startswith("db(") and placeholder_content.endswith(")"):
                         query = placeholder_content[3:-1].strip()
                         print(f"    占位符类型: db, 执行查询: '{query}'")
@@ -328,15 +328,16 @@ def process_placeholders(structured_records: List[Dict[str, Any]]) -> List[Dict[
                                     print(f"    警告：db 查询 '{query}' 返回了多列，将使用整个字典。")
                                     processed_fields[field] = first_row # 或者抛出错误？
                             elif isinstance(query_result, list) and not query_result: # 空列表
-                                 print(f"    警告：db 查询 '{query}' 返回空结果，将使用 None。")
-                                 processed_fields[field] = None # 或者空字符串 ''?
+                                 print(f"    警告：db 查询 '{query}' 返回空结果。")
+                                 # 抛出更友好的错误信息，指明查询没有找到结果
+                                 raise ValueError(f"数据库查询 '{query}' 没有找到任何结果。请检查您的输入是否正确，或者该记录是否存在。")
                             else:
                                 raise ValueError(f"db 查询 '{query}' 的结果格式无法解析为单值: {query_result_str}")
                         except Exception as e:
                             print(f"    错误：执行 db 查询 '{query}' 或处理结果失败: {e}")
                             raise ValueError(f"处理 db 占位符失败: {e}")
-                    
-                    # 处理 {{random(...)}}    
+
+                    # 处理 {{random(...)}}
                     elif placeholder_content.lower().startswith("random(") and placeholder_content.endswith(")"):
                         random_type = placeholder_content[7:-1].strip().lower()
                         print(f"    占位符类型: random, 类型: '{random_type}'")
@@ -344,7 +345,7 @@ def process_placeholders(structured_records: List[Dict[str, Any]]) -> List[Dict[
                         if random_type == "string":
                             resolved_value = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
                         elif random_type == "number":
-                            resolved_value = random.randint(1, 1000) 
+                            resolved_value = random.randint(1, 1000)
                         elif random_type == "uuid":
                             resolved_value = str(uuid.uuid4())
                         # 可以添加更多随机类型，例如 email, phone 等
@@ -353,7 +354,7 @@ def process_placeholders(structured_records: List[Dict[str, Any]]) -> List[Dict[
                             raise ValueError(f"不支持的 random 类型: {random_type}")
                         print(f"    生成随机值: {resolved_value}")
                         processed_fields[field] = resolved_value
-                        
+
                     else:
                         # 处理无法识别的占位符
                         print(f"    错误：无法识别的占位符内容: '{placeholder_content}'")
@@ -364,9 +365,9 @@ def process_placeholders(structured_records: List[Dict[str, Any]]) -> List[Dict[
             else:
                 # 非字符串值，直接保留
                 processed_fields[field] = value
-        
+
         # 更新记录的 fields
         processed_records.append({"table_name": record["table_name"], "fields": processed_fields})
 
     print(f"--- 占位符处理完成。处理后记录: {processed_records} ---")
-    return processed_records 
+    return processed_records
