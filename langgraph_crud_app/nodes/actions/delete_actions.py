@@ -241,7 +241,8 @@ def format_delete_preview_action(state: GraphState) -> Dict[str, Any]:
              return {
                  error_key: None,
                  "delete_preview_text": preview_text,
-                 "content_delete": preview_text # 也更新暂存区
+                 "content_delete": preview_text, # 也更新暂存区
+                 "pending_confirmation_type": None # 无需确认
              }
 
         print(f"--- 成功格式化预览文本 ---")
@@ -249,7 +250,8 @@ def format_delete_preview_action(state: GraphState) -> Dict[str, Any]:
         return {
             error_key: None,
             "delete_preview_text": preview_text,
-            "content_delete": preview_text
+            "content_delete": preview_text,
+            "pending_confirmation_type": "delete" # 设置待确认类型
         }
 
     except Exception as e:
@@ -260,7 +262,8 @@ def format_delete_preview_action(state: GraphState) -> Dict[str, Any]:
         return {
             error_key: error_msg,
             "delete_preview_text": fallback_preview,
-            "content_delete": fallback_preview # 错误时也暂存回退信息
+            "content_delete": fallback_preview, # 错误时也暂存回退信息
+            "pending_confirmation_type": None # 出错，不设置或清除
         }
 
 

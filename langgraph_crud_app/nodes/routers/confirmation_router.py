@@ -65,25 +65,43 @@ def _stage_operation_logic(state: GraphState) -> Literal[
 ]:
     """
     路由逻辑：判断应该暂存哪种操作。
-    对应 Dify 节点: 1742272764317
-    修改：增加对 content_delete 和 content_combined 的检查。
+    优先使用 pending_confirmation_type 决定，其次检查 content_* 状态。
     """
-    content_modify = state.get("content_modify")
-    content_new = state.get("content_new")
-    content_delete = state.get("content_delete")
-    content_combined = state.get("content_combined")
+    pending_type = state.get("pending_confirmation_type")
+    
+    # For debugging and clarity
+    cm = '有' if state.get("content_modify") else '无'
+    cn = '有' if state.get("content_new") else '无'
+    cd = '有' if state.get("content_delete") else '无'
+    cc = '有' if state.get("content_combined") else '无'
+    print(f"---路由逻辑: 尝试暂存，状态详情 -> pending_type: '{pending_type}', modify: {cm}, new: {cn}, delete: {cd}, combined: {cc}---")
 
-    print(f"---路由逻辑: 尝试暂存，modify: {'有' if content_modify else '无'}, new: {'有' if content_new else '无'}, delete: {'有' if content_delete else '无'}, combined: {'有' if content_combined else '无'}---")
-
-    if content_modify:
+    if pending_type == "modify" and state.get("content_modify"):
         return "stage_modify_action"
-    elif content_new:
+    elif pending_type == "add" and state.get("content_new"):
         return "stage_add_action"
-    elif content_delete:
+    elif pending_type == "delete" and state.get("content_delete"):
         return "stage_delete_action"
-    elif content_combined:
+    elif pending_type == "composite" and state.get("content_combined"):
+        return "stage_combined_action"
+    
+    if pending_type:
+        print(f"警告: pending_confirmation_type ('{pending_type}') 已设置，但对应的 content_* 状态不存在或不匹配。将回退到基于 content_* 的判断。")
+
+    if state.get("content_modify"):
+        print("回退判断：暂存修改操作")
+        return "stage_modify_action"
+    elif state.get("content_new"):
+        print("回退判断：暂存新增操作")
+        return "stage_add_action"
+    elif state.get("content_delete"):
+        print("回退判断：暂存删除操作")
+        return "stage_delete_action"
+    elif state.get("content_combined"):
+        print("回退判断：暂存复合操作")
         return "stage_combined_action"
     else:
+        print("无内容可暂存")
         return "handle_nothing_to_stage"
 
 def _check_staged_operation_logic(state: GraphState) -> Literal[

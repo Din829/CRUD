@@ -34,6 +34,7 @@ def handle_reset_action(state: GraphState) -> Dict[str, Any]:
         "modify_context_sql": None,
         "modify_context_result": None,
         "modify_error_message": None,
+        "pending_confirmation_type": None,
         # ... 其他可能需要重置的状态 ...
         "final_answer": "之前的操作状态已重置。"
     }
@@ -212,6 +213,7 @@ def cancel_save_action(state: GraphState) -> Dict[str, Any]:
         "delete_ids_llm_output",
         "delete_ids_structured_str",
         "combined_operation_plan", 
+        "pending_confirmation_type"
     ]
     
     updates = {key: None for key in keys_to_clear_on_cancel}
@@ -449,9 +451,11 @@ def reset_after_operation_action(state: GraphState) -> Dict[str, Any]:
         "delete_array", # 如果确认流程中还用到的话
         # ... 其他可能需要重置的中间状态 ...
         # 不重置: final_answer (由下一步生成), error_message (可能需要传递)
+        "pending_confirmation_type"
     ]
 
     updates = {key: None for key in keys_to_reset}
+    
     # 确保即使 keys_to_reset 中没有显式列出，save_content 也被重置
     # (虽然上面已经通过取消注释的方式加入了)
     if "save_content" not in updates:

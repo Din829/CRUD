@@ -275,11 +275,11 @@ def format_combined_preview_action(state: GraphState) -> Dict[str, Any]:
         else: # It has content that might be stale if combined_plan_for_preview is empty
              logger.info("原始计划为空，但处理后计划非空，可能不一致，预览时通知用户无操作。")
 
-        return {"content_combined": no_op_preview, "lastest_content_production": state.get("lastest_content_production") if combined_plan_for_preview else []}
+        return {"content_combined": no_op_preview, "lastest_content_production": state.get("lastest_content_production") if combined_plan_for_preview else [], "pending_confirmation_type": None}
 
     if not isinstance(combined_plan_for_preview, list):
         logger.error(f"原始复合操作计划格式错误 (非列表: {type(combined_plan_for_preview)})，无法生成预览。")
-        return {"error_message": "复合操作计划状态错误，无法生成预览。", "content_combined": None}
+        return {"error_message": "复合操作计划状态错误，无法生成预览。", "content_combined": None, "pending_confirmation_type": None}
 
     try:
         # LLM 现在可以同时拿到原始计划（主要用于措辞）和实际执行计划（用于准确性）
@@ -290,10 +290,18 @@ def format_combined_preview_action(state: GraphState) -> Dict[str, Any]:
             # actual_executable_plan=processed_plan_for_context
         )
         logger.info(f"生成复合操作预览文本: {preview_text}")
-        return {"content_combined": preview_text, "error_message": None}
+        return {
+            "content_combined": preview_text, 
+            "error_message": None,
+            "pending_confirmation_type": "composite" # 设置待确认类型
+        }
 
     except Exception as e:
         logger.exception(f"调用 LLM 格式化复合预览时发生错误: {e}")
         plan_str_fallback = json.dumps(combined_plan_for_preview, ensure_ascii=False, indent=2)
         fallback_preview = f"无法生成清晰的预览。将尝试执行以下原始操作计划（占位符未处理，部分操作可能因数据无效而跳过），请谨慎确认：\\n{plan_str_fallback}"
-        return {"error_message": f"生成复合预览时出错: {e}", "content_combined": fallback_preview} 
+        return {
+            "error_message": f"生成复合预览时出错: {e}", 
+            "content_combined": fallback_preview,
+            "pending_confirmation_type": None # 出错，不设置或清除
+        } 

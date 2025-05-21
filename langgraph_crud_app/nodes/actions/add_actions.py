@@ -237,7 +237,8 @@ def format_add_preview_action(state: GraphState) -> Dict[str, Any]:
             "add_preview_text": preview_text,
             "content_new": preview_text, # 同时更新 content_new
             "lastest_content_production": processed_records, # 同时更新 lastest_content_production
-            "add_error_message": None
+            "add_error_message": None,
+            "pending_confirmation_type": "add" # 设置待确认类型
         }
     except Exception as e:
         print(f"--- 调用 format_add_preview 时出错: {e} ---")
@@ -250,7 +251,8 @@ def format_add_preview_action(state: GraphState) -> Dict[str, Any]:
             "add_error_message": f"生成预览文本时出错: {e}",
             "add_preview_text": fallback_preview,
             "content_new": None, # 出错时清空 content_new
-            "lastest_content_production": None # <--- 新增此行
+            "lastest_content_production": None, # <--- 新增此行
+            "pending_confirmation_type": None # 确保出错时不设置或清除
         }
 
 

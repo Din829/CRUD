@@ -1,6 +1,6 @@
 # state.py: 定义 LangGraph 应用的状态 TypedDict。
 
-from typing import List, TypedDict, Optional, Any, Dict
+from typing import List, TypedDict, Optional, Any, Dict, Literal
 # 尝试从 typing_extensions 导入
 try:
     from typing import NotRequired
@@ -96,3 +96,6 @@ class GraphState(TypedDict):
 
     # ---- 用于调试和测试的辅助状态 ----
     # ... existing code ... 
+
+    # ---- 确认流程控制状态 (新增) ----
+    pending_confirmation_type: NotRequired[Optional[Literal["add", "modify", "delete", "composite"]]]

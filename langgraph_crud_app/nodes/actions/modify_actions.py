@@ -335,7 +335,11 @@ def provide_modify_feedback_action(state: GraphState) -> Dict[str, Any]:
     if not content_modify:
         error_msg = "无法生成修改预览，可能是解析失败或未找到匹配记录。请尝试提供更明确的修改信息。"
         logger.warning(error_msg)
-        return {"final_answer": f"抱歉，{error_msg}", "error_flag": True}
+        return {
+            "final_answer": f"抱歉，{error_msg}", 
+            "error_flag": True,
+            "pending_confirmation_type": None # 清除或不设置
+        }
 
     # 美化 JSON 显示
     try:
@@ -348,7 +352,10 @@ def provide_modify_feedback_action(state: GraphState) -> Dict[str, Any]:
 
     final_answer = f"已准备好以下修改内容，请发送'保存'进行最终确认：\n\n{formatted_content}"
 
-    return {"final_answer": final_answer}
+    return {
+        "final_answer": final_answer,
+        "pending_confirmation_type": "modify" # 设置待确认类型
+    }
 
 
 # 辅助函数 (示例，用于美化 JSON 显示，可以根据需要实现)

@@ -80,4 +80,5 @@ def route_initialization_node(state: GraphState) -> Dict[str, Any]:
         
         "delete_preview_text": None, # Specific preview text for a turn's output
         "add_preview_text": None,    # Specific preview text for a turn's output
+        "pending_confirmation_type": None # 新增：清除待确认类型
     } 
