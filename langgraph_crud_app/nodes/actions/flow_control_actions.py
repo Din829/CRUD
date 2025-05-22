@@ -10,6 +10,8 @@ from langgraph_crud_app.services import api_client # 新增导入
 from langgraph_crud_app.services.llm import llm_flow_control_service # 新增导入
 # 新增导入删除 LLM 服务
 from langgraph_crud_app.services.llm import llm_delete_service
+# 新增导入错误处理 LLM 服务
+from langgraph_crud_app.services.llm import llm_error_service
 
 # --- 主流程占位符/简单动作节点 ---
 
@@ -401,8 +403,42 @@ def execute_operation_action(state: GraphState) -> Dict[str, Any]:
 
 
     except Exception as e:
-        error_message = f"执行操作 '{save_content}' 时发生意外错误: {e}"
-        print(error_message)
+        # 检查是否是API客户端返回的包含具体错误信息的ValueError
+        if isinstance(e, ValueError) and str(e).startswith("API错误:"):
+            # 提取Flask的具体错误信息
+            flask_error = str(e).replace("API错误:", "").strip()
+            print(f"检测到Flask错误，调用LLM错误处理服务进行转换: {flask_error}")
+            
+            # 构建操作上下文
+            operation_context = {
+                "user_query": state.get("user_query", ""),
+                "operation_type": {
+                    "修改路径": "修改操作",
+                    "新增路径": "新增操作", 
+                    "删除路径": "删除操作",
+                    "复合路径": "复合操作"
+                }.get(save_content, "数据库操作"),
+                "tables_involved": "数据库表"  # 可以根据需要进一步细化
+            }
+            
+            try:
+                # 调用LLM错误处理服务转换错误信息
+                friendly_error = llm_error_service.translate_flask_error(
+                    error_info=flask_error,
+                    operation_context=operation_context,
+                    schema_info=state.get("biaojiegou_save")  # 传递schema信息以获得更好的错误解释
+                )
+                error_message = friendly_error
+                print(f"LLM转换后的友好错误信息: {friendly_error}")
+            except Exception as llm_error:
+                print(f"LLM错误转换失败: {llm_error}")
+                # 回退到原始错误信息
+                error_message = f"操作失败: {flask_error}"
+        else:
+            # 其他类型的异常，使用原有逻辑
+            error_message = f"执行操作 '{save_content}' 时发生意外错误: {e}"
+            print(error_message)
+        
         updates["error_message"] = error_message
         updates["api_call_result"] = None # 发生异常时清空结果
 
@@ -502,14 +538,22 @@ def format_operation_response_action(state: GraphState) -> Dict[str, Any]:
         # 修正参数传递
         if error_message_from_execution: # 如果执行层捕获了顶层错误
             print(f"格式化执行层错误信息: {error_message_from_execution}")
-            final_answer = llm_flow_control_service.format_api_result(
-                result=None, # 没有成功结果
-                original_query=user_query,
-                operation_type=op_type_str
-            )
-            # 如果 format_api_result 不能很好地处理顶层错误，提供回退消息
-            if "未知" in final_answer:
-                final_answer = f"操作失败：{error_message_from_execution}"
+            # 如果错误信息已经是LLM转换过的友好信息，直接使用
+            # 检查是否包含典型的技术错误标识符
+            if any(tech_indicator in error_message_from_execution for tech_indicator in 
+                   ["Internal Server Error", "API错误", "500 Server Error", "execute_operation_action"]):
+                # 这是技术性错误，尝试用LLM格式化
+                final_answer = llm_flow_control_service.format_api_result(
+                    result=None, # 没有成功结果
+                    original_query=user_query,
+                    operation_type=op_type_str
+                )
+                # 如果 format_api_result 不能很好地处理顶层错误，提供回退消息
+                if "未知" in final_answer:
+                    final_answer = f"操作失败：{error_message_from_execution}"
+            else:
+                # 这可能已经是友好的错误信息，直接使用
+                final_answer = error_message_from_execution
 
         elif api_result_data is not None: # 如果有 API 结果
             print(f"格式化 API 结果: {api_result_data}")

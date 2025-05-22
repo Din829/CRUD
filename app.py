@@ -590,6 +590,63 @@ def insert_record():
         except Exception as e:
             connection.rollback()
             app.logger.error(f"Error inserting records: {str(e)}")
+            
+            # 如果是外键约束错误，提供更详细的信息
+            if isinstance(e, pymysql.err.IntegrityError):
+                error_code = e.args[0]
+                error_msg_str = e.args[1]
+                
+                if error_code == 1452:  # 外键约束失败
+                    # 解析外键错误信息，提取具体的外键和值
+                    # 示例："Cannot add or update a child row: a foreign key constraint fails (`db`.`api_tokens`, CONSTRAINT `api_tokens_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE)"
+                    fk_match = re.search(r"FOREIGN KEY \(`(\w+)`\) REFERENCES `(\w+)` \(`(\w+)`\)", error_msg_str)
+                    table_match = re.search(r"`([^`]+)`, CONSTRAINT", error_msg_str)
+                    
+                    if fk_match and table_match:
+                        fk_column = fk_match.group(1)      # e.g., "user_id"
+                        ref_table = fk_match.group(2)      # e.g., "users" 
+                        ref_column = fk_match.group(3)     # e.g., "id"
+                        target_table = table_match.group(1) # e.g., "api_tokens"
+                        
+                        # 尝试从插入的数据中提取具体的外键值
+                        fk_value = "未知"
+                        try:
+                            # 遍历所有插入的记录，找到导致外键错误的值
+                            for record in records:
+                                if (isinstance(record, dict) and 
+                                    record.get("table_name") == target_table and 
+                                    isinstance(record.get("fields"), dict) and 
+                                    fk_column in record["fields"]):
+                                    fk_value = record["fields"][fk_column]
+                                    break
+                        except Exception as extract_err:
+                            app.logger.warning(f"无法从插入数据中提取外键值: {extract_err}")
+                        
+                        # 构造包含具体值的用户友好错误信息
+                        if fk_value != "未知":
+                            error_detail = f"外键约束失败：{fk_column}值'{fk_value}'在{ref_table}表中不存在。请先创建对应的{ref_table}记录。"
+                        else:
+                            error_detail = f"外键约束失败：表 {target_table} 的 {fk_column} 字段引用了表 {ref_table} 中不存在的 {ref_column} 值。请检查相关记录是否存在。"
+                        return jsonify({"error": error_detail}), 409
+                    else:
+                        # 回退方案：使用通用外键错误信息
+                        return jsonify({"error": f"外键约束错误：{error_msg_str}"}), 409
+                        
+                elif error_code == 1062:  # 重复值错误
+                    # 解析重复值错误信息
+                    match = re.search(r"Duplicate entry '(?P<value>.*?)' for key '(?P<key>.*?)'", error_msg_str)
+                    if match:
+                        conflicting_value = match.group('value')
+                        key_name = match.group('key')
+                        error_detail = f"重复值错误：{key_name} 字段的值 '{conflicting_value}' 已存在。"
+                        return jsonify({"error": error_detail}), 409
+                    else:
+                        return jsonify({"error": f"唯一约束错误：{error_msg_str}"}), 409
+                        
+                elif error_code == 1364:  # 缺少必需字段
+                    return jsonify({"error": f"必需字段缺失：{error_msg_str}"}), 400
+            
+            # 其他错误类型使用原有处理
             return jsonify({"error": f"Internal Server Error: {str(e)}"}), 500
 
 

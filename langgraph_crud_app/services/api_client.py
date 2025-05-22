@@ -209,16 +209,65 @@ def insert_record(insert_payload: List[Dict[str, Any]]) -> Dict[str, Any]:
         一个字典，代表插入操作的结果 (例如: {"message": "..."})。
     抛出:
         requests.exceptions.RequestException: 如果 API 请求失败。
-        ValueError: 如果响应不是有效的 JSON。
+        ValueError: 如果响应不是有效的 JSON或包含API错误信息。
     """
     api_url = f"{BASE_API_URL}/insert_record"
     try:
         print(f"调试: 发送插入负载: {json.dumps(insert_payload, ensure_ascii=False)}") # 类似 Dify code 中的调试行
         response = requests.post(api_url, headers=HEADERS, json=insert_payload, timeout=TIMEOUT)
+        
+        # 记录API响应，帮助调试
+        print(f"插入记录API响应状态码: {response.status_code}")
+        print(f"插入记录API响应内容: {response.text[:500]}...")
+        
+        # 如果是错误响应，尝试从响应内容提取有用信息
+        if response.status_code != 200:
+            try:
+                error_data = response.json()
+                print(f"解析到的错误数据: {error_data}")
+                if isinstance(error_data, dict) and "error" in error_data:
+                    error_message = error_data["error"]
+                    print(f"API错误详情: {error_message}")
+                    # 将API返回的错误消息抛出，保留完整信息
+                    raise ValueError(f"API错误: {error_message}")
+                else:
+                    print(f"错误响应格式异常: {error_data}")
+                    raise ValueError(f"API错误: 未知错误格式")
+            except json.JSONDecodeError as json_err:
+                # 如果无法解析JSON错误响应，使用原始内容
+                error_content = response.text[:200] + ("..." if len(response.text) > 200 else "")
+                print(f"API返回非JSON错误响应: {error_content}")
+                raise ValueError(f"API错误: 无法解析错误响应 - {error_content}")
+        
+        # 正常处理响应
         response.raise_for_status()
         return response.json()
+        
     except requests.exceptions.RequestException as e:
         print(f"调用 insert_record API 时出错: {e}")
+        print(f"异常类型: {type(e)}")
+        # 检查是否有API返回的错误信息
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"异常中的响应状态码: {e.response.status_code}")
+            print(f"异常中的响应内容: {e.response.text[:500]}...")
+            try:
+                error_data = e.response.json()
+                print(f"从异常响应中解析到的错误数据: {error_data}")
+                if isinstance(error_data, dict) and "error" in error_data:
+                    # 提取API返回的具体错误信息
+                    error_detail = error_data['error']
+                    print(f"提取到Flask具体错误信息: {error_detail}")
+                    raise ValueError(f"API错误: {error_detail}")
+                else:
+                    print(f"异常响应格式异常: {error_data}")
+                    raise ValueError(f"API错误: {error_data}")
+            except (json.JSONDecodeError, KeyError) as parse_err:
+                print(f"解析异常响应时出错: {parse_err}")
+                # 如果无法解析API错误，使用原始异常信息
+                raw_content = e.response.text[:200] + ("..." if len(e.response.text) > 200 else "")
+                raise ValueError(f"API错误: 无法解析异常响应 - {raw_content}")
+        # 未能提取API具体错误，则重新抛出原始异常
+        print("异常中没有响应信息，重新抛出原始异常")
         raise
     except json.JSONDecodeError as e:
         print(f"解码 insert_record 的 JSON 响应时出错: {e}")
@@ -299,18 +348,71 @@ def execute_batch_operations(operations: List[Dict[str, Any]]) -> Dict[str, Any]
         一个字典，代表整个批处理操作的结果（成功或失败信息）。
     抛出:
         requests.exceptions.RequestException: 如果 API 请求失败。
-        ValueError: 如果响应不是有效的 JSON。
+        ValueError: 如果响应不是有效的 JSON或包含API错误信息。
     """
     api_url = f"{BASE_API_URL}/execute_batch_operations" # 新的端点 URL
     try:
         print(f"调试: 发送批量操作负载: {json.dumps(operations, ensure_ascii=False)}")
         # 注意：超时时间可能需要根据操作复杂性调整
         response = requests.post(api_url, headers=HEADERS, json=operations, timeout=TIMEOUT * 3) # 稍微延长超时
+        
+        # 记录API响应，帮助调试
+        print(f"批量操作API响应状态码: {response.status_code}")
+        
+        # 如果是错误响应，尝试从响应内容提取有用信息
+        if response.status_code != 200:
+            try:
+                error_data = response.json()
+                if isinstance(error_data, dict) and "error" in error_data:
+                    error_message = error_data["error"]
+                    
+                    # 检查是否有详细错误信息（特别是重复约束错误）
+                    error_detail = error_data.get("detail")
+                    if error_detail and isinstance(error_detail, dict):
+                        # 如果是重复约束错误，使用更详细的信息
+                        if error_detail.get("type") == "IntegrityError.DuplicateEntry":
+                            # 使用原始数据库错误信息，包含具体字段和值
+                            original_error = error_detail.get("original_error", "")
+                            if original_error:
+                                # 直接使用数据库的详细错误信息，如："Duplicate entry '张三丰' for key 'users.username'"
+                                detailed_message = original_error
+                            else:
+                                # 回退方案：构造错误信息
+                                table_name = error_detail.get("table_name", "")
+                                key_name = error_detail.get("key_name", "")
+                                conflicting_value = error_detail.get("conflicting_value", "")
+                                operation_index = error_detail.get("failed_operation_index", "")
+                                detailed_message = f"批量操作第{operation_index}步失败: 表{table_name}的{key_name}字段值'{conflicting_value}'已存在"
+                            
+                            print(f"API详细错误信息: {detailed_message}")
+                            raise ValueError(f"API错误: {detailed_message}")
+                    
+                    print(f"API错误详情: {error_message}")
+                    # 将API返回的错误消息抛出，保留完整信息
+                    raise ValueError(f"API错误: {error_message}")
+            except json.JSONDecodeError:
+                # 如果无法解析JSON错误响应，使用原始内容
+                error_content = response.text[:200] + ("..." if len(response.text) > 200 else "")
+                print(f"API返回非JSON错误响应: {error_content}")
+        
+        # 正常处理响应
         response.raise_for_status()
         return response.json()
+        
     except requests.exceptions.RequestException as e:
         print(f"调用 execute_batch_operations API 时出错: {e}")
-        # 可以根据 e.response 进一步判断错误原因
+        # 检查是否有API返回的错误信息
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_data = e.response.json()
+                if isinstance(error_data, dict) and "error" in error_data:
+                    # 提取API返回的具体错误信息
+                    error_detail = error_data['error']
+                    print(f"提取到Flask具体错误信息: {error_detail}")
+                    raise ValueError(f"API错误: {error_data['error']}")
+            except (json.JSONDecodeError, KeyError):
+                pass  # 如果无法解析API错误，使用默认异常
+        # 未能提取API具体错误，则重新抛出原始异常
         raise
     except json.JSONDecodeError as e:
         print(f"解码 execute_batch_operations 的 JSON 响应时出错: {e}")

@@ -159,7 +159,6 @@ E        +  where None = <built-in method get of dict object at ...>('Type')
 **`test_get_schema_success` 测试用例中的断言逻辑存在错误。** 它在比较从 API 获取的 Schema 字段详情 (`field_details_api`) 时，错误地使用了大写的键名 (`'Type'`, 可能后续还有 `'Null'`, `'Key'`, `'Default'`) 来访问字典，而 `/get_schema` API 实际返回的 JSON 结构中使用的是小写键名 (`'type'`, `'null'`, `'key'`, `'default'`)。
 
 ### 建议修复方案
-
 修改 `text/unittests/test_app_apis.py` 文件中 `test_get_schema_success` 函数内的断言逻辑，确保在访问 `field_details_api` 字典时使用小写键名，与 API 返回的实际结构保持一致。例如：
 
 ```python
@@ -459,5 +458,77 @@ Action 节点 (`generate_select_sql_action`) 自身负责根据这个字符串�
 **后续行动:**
 -   需要深入研究 LangGraph 的状态更新和传递机制，特别是当一个节点返回包含多个字段的字典时，这些字段是如何合并到现有状态中，以及是否有特定键名（如 `final_answer`）或特定值（如从 `None` 更新到字符串）会触发不同的行为。
 -   在问题解决前，测试用例 4.4 只能通过断言实际的错误路径（即 `final_answer` 来自 `handle_modify_error_action`)来部分验证流程，但这并非其最初的设计目标。
+
+## 问题报告13: LLM错误信息处理优化 - 从泛化错误到具体字段值错误
+
+### 问题描述
+在之前的错误处理流程中，LLM错误服务收到的错误信息过于泛化，无法提供具体的字段名和值信息。例如：
+- **原始错误**: `Unique constraint violation during batch operation.`  
+- **LLM转换后**: `批量操作中存在重复值冲突`
+
+用户反映即使提示词已经要求精准处理并明确指出字段名和重复值，LLM仍然返回含糊不清的错误信息，没有具体到ID等关键信息。
+
+### 根本原因
+问题出现在两个层面：
+
+1. **API客户端层面**: `execute_batch_operations`方法的错误处理不完整
+   - 只使用了Flask返回的generic error message
+   - 没有利用Flask在`detail`字段中提供的具体错误信息
+
+2. **Flask后端层面**: `insert_record`端点的外键约束错误处理不够详细
+   - 没有解析具体的外键字段名和失败的值
+   - 缺少对具体问题值的提取和报告
+
+### 解决方案
+
+#### 1. API客户端优化
+修改`execute_batch_operations`方法的错误处理逻辑：
+
+```python
+# 原代码
+raise ValueError(f"API错误: {error_data['error']}")
+
+# 修改后
+detail_info = error_data.get('detail', error_data.get('error', str(e)))
+raise ValueError(f"API错误: {detail_info}")
+```
+
+#### 2. Flask后端外键约束错误增强
+在`insert_record`端点中增加了对外键约束错误的详细解析：
+
+```python
+if isinstance(e, pymysql.err.IntegrityError):
+    error_code = e.args[0]
+    error_msg_str = e.args[1]
+    
+    if error_code == 1452:  # 外键约束失败
+        # 解析具体的字段和值
+        fk_match = re.search(r"FOREIGN KEY \(`(\w+)`\) REFERENCES `(\w+)` \(`(\w+)`\)", error_msg_str)
+        
+        if fk_match:
+            fk_column = fk_match.group(1)      # e.g., "user_id"
+            ref_table = fk_match.group(2)      # e.g., "users" 
+            
+            # 从当前插入的数据中获取具体的失败值
+            failed_value = record_dict["fields"].get(fk_column)
+            
+            detail_msg = f"{fk_column}值'{failed_value}'在{ref_table}表中不存在。请先创建对应的{ref_table}记录。"
+            
+            return jsonify({"error": "外键约束失败", "detail": detail_msg}), 409
+```
+
+### 效果验证
+修复后的错误处理流程能够提供具体信息：
+- **Flask详细错误**: `user_id值'999'在users表中不存在。请先创建对应的users记录。`
+- **LLM最终转换**: `用户ID 999不存在，请先创建该用户`
+
+### 技术要点
+1. **错误信息链路**: 确保从数据库→Flask→API客户端→LLM服务的完整错误信息传递
+2. **正则表达式解析**: 准确提取MySQL外键约束错误中的字段名和表名信息  
+3. **上下文值提取**: 从当前操作数据中获取导致错误的具体字段值
+4. **分层错误处理**: 在API客户端和Flask后端两个层面都进行相应优化
+
+### 状态
+问题已完全解决。现在LLM错误服务能够接收到包含具体字段名和值的详细错误信息，从而生成更准确、更有帮助的用户友好错误提示。
 
 

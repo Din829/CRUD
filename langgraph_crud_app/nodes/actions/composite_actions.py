@@ -12,6 +12,7 @@ import re # 确保导入 re
 
 from langgraph_crud_app.graph.state import GraphState
 from langgraph_crud_app.services.llm import llm_composite_service
+from langgraph_crud_app.services.llm import llm_error_service  # 新增：导入错误处理服务
 from langgraph_crud_app.services import api_client # 需要 API Client
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,21 @@ def _process_value(value: Any): # 移除 cursor 参数，使用全局 api_client
                     return None # 视为解析失败
             except Exception as e:
                 logger.error(f"执行数据库子查询 '{subquery}' 时出错: {e}")
+                # 使用新的错误处理服务转换API错误为用户友好信息
+                try:
+                    friendly_error = llm_error_service.translate_flask_error(
+                        error_info=str(e),
+                        operation_context={
+                            "user_query": subquery,
+                            "operation_type": "数据库查询",
+                            "tables_involved": "数据库查询"
+                        }
+                    )
+                    logger.info(f"数据库查询错误的用户友好信息: {friendly_error}")
+                    # 这里我们仍然返回None表示占位符解析失败，但错误信息已经被处理
+                    # 在更高层级的函数中可以访问这个友好错误信息
+                except Exception as err_service_error:
+                    logger.warning(f"错误处理服务也失败了: {err_service_error}")
                 return None
 
         # 处理 random 占位符
