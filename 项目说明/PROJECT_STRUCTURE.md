@@ -147,6 +147,12 @@ langgraph_crud_app/
 │       ├── llm_composite_service.py # 新增: 复合操作 LLM 服务
 │       │   ├── parse_combined_request(...)     # LLM 解析复合请求为操作列表
 │       │   └── format_combined_preview(...)    # LLM 格式化复合操作预览
+│       ├── llm_error_service.py     # 新增: 错误处理 LLM 服务
+│       │   ├── translate_flask_error(...)      # LLM 转换Flask技术错误为用户友好信息
+│       │   ├── _analyze_error_type(...)        # (内部) 分析错误类型
+│       │   ├── _fallback_error_translation(...) # (内部) 基于规则的错误转换回退
+│       │   ├── format_database_constraint_error(...) # 专门处理数据库约束错误
+│       │   └── _get_friendly_field_name(...)   # (内部) 转换字段名为用户友好名称
 │       └── llm_flow_control_service.py # 主流程/确认流程 LLM 服务
 │           ├── classify_yes_no(...)          # LLM 判断用户是否确认 (是/否)
 │           └── format_api_result(...)      # LLM 格式化 API 操作结果 (支持删除结果)

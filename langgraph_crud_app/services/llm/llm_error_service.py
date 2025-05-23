@@ -56,11 +56,19 @@ def translate_flask_error(
    - 指出具体哪个字段格式错误
    - 给出正确格式的示例
 
-5. **SQL语法错误**:
+5. **表名错误** (Table doesn't exist):
+   - 明确指出哪个表名不存在
+   - 列出可用的表名供用户选择
+
+6. **字段名错误** (Unknown column):
+   - 明确指出哪个字段名不存在
+   - 提供该表的可用字段名列表
+
+7. **SQL语法错误**:
    - 避免暴露SQL细节
    - 引导用户重新描述需求
 
-6. **批量操作冲突**:
+8. **批量操作冲突**:
    - 说明是复合操作中的哪一步失败
    - 解释失败原因和影响
 
@@ -101,7 +109,7 @@ def translate_flask_error(
         
         response = chain.invoke(context)
         friendly_error = response.content.strip()
-        
+
         print(f"LLM转换后的友好错误: {friendly_error}")
         return friendly_error
         
@@ -109,7 +117,8 @@ def translate_flask_error(
         print(f"LLM错误转换失败: {e}")
         # 提供基于规则的回退处理
         return _fallback_error_translation(error_info, operation_context)
-
+        
+               
 def _analyze_error_type(error_info: str) -> str:
     """分析错误类型"""
     error_lower = error_info.lower()
@@ -120,7 +129,14 @@ def _analyze_error_type(error_info: str) -> str:
         return "FOREIGN_KEY"
     elif "cannot be null" in error_lower or "not null constraint" in error_lower:
         return "NOT_NULL"
+    elif "1146" in error_info or "table" in error_lower and "doesn't exist" in error_lower:
+        return "TABLE_NOT_EXISTS"
+    elif "1054" in error_info or "unknown column" in error_lower:
+        return "COLUMN_NOT_EXISTS"
     elif "syntax error" in error_lower or "1064" in error_info:
+        # 检查是否是SQL注入尝试导致的语法错误
+        if _is_sql_injection_attempt(error_info):
+            return "SQL_INJECTION"
         return "SYNTAX_ERROR"
     elif "data type" in error_lower or "invalid" in error_lower:
         return "DATA_TYPE"
@@ -130,6 +146,38 @@ def _analyze_error_type(error_info: str) -> str:
         return "CONNECTION"
     else:
         return "UNKNOWN"
+    
+
+def _is_sql_injection_attempt(error_info: str) -> bool:
+    """检查是否是SQL注入尝试导致的语法错误"""
+    # 检查错误信息中是否包含常见的SQL注入模式
+    injection_patterns = [
+        "drop table",
+        "delete from", 
+        "insert into",
+        "update.*set",
+        "union.*select",
+        "exec.*(",
+        "--.*'",
+        ";.*drop",
+        ";.*delete",
+        ";.*insert",
+        ";.*update"
+    ]
+    
+    error_lower = error_info.lower()
+    
+    # 检查是否包含注入模式
+    for pattern in injection_patterns:
+        if re.search(pattern, error_lower):
+            return True
+    
+    # 检查特定的SQL注入错误消息模式
+    # 例如: "syntax error near ''; DROP TABLE users' at line 1"
+    if re.search(r"near\s+['\"][^'\"]*(?:drop|delete|insert|update|union)", error_lower):
+        return True
+        
+    return False
 
 def _fallback_error_translation(error_info: str, operation_context: Dict[str, Any]) -> str:
     """基于规则的错误转换回退方案"""
@@ -144,6 +192,9 @@ def _fallback_error_translation(error_info: str, operation_context: Dict[str, An
         "DATA_TYPE": f"{operation_type}失败，因为某些字段的格式不正确。请检查日期、数字等字段的格式。",
         "PERMISSION": f"抱歉，您没有执行此{operation_type}的权限。",
         "CONNECTION": f"服务暂时不可用，请稍后重试。",
+        "SQL_INJECTION": "输入包含特殊字符，请使用普通的查询条件。",
+        "TABLE_NOT_EXISTS": "表名不存在。可用的表包括：users（用户）、prompts（提示词）、api_tokens（API令牌）、ocr_tasks（OCR任务）。",
+        "COLUMN_NOT_EXISTS": "字段名不存在，请检查字段名是否正确。",
         "UNKNOWN": f"{operation_type}遇到了问题。请检查您的输入或联系管理员。"
     }
     

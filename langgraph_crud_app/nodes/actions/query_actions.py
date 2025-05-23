@@ -147,9 +147,29 @@ def execute_sql_query_action(state: GraphState) -> Dict[str, Any]:
     except Exception as e:
         error_msg = f"执行 SQL 查询时出错: {e}"
         print(error_msg)
-        intent = state.get("query_analysis_intent", "query")
-        clarify_msg = "请澄清你的分析需求。" if intent == "analysis" else "请澄清你的查询条件。"
-        return {"sql_result": None, "error_message": error_msg, "final_answer": f"执行查询时遇到错误。{clarify_msg}"}
+        
+        # 尝试使用LLM错误服务转换错误
+        try:
+            from langgraph_crud_app.services.llm import llm_error_service
+            
+            operation_context = {
+                "user_query": state.get("user_query", "未知查询"),
+                "operation_type": "查询"
+            }
+            
+            friendly_error = llm_error_service.translate_flask_error(
+                error_info=str(e),
+                operation_context=operation_context
+            )
+            
+            return {"sql_result": None, "error_message": error_msg, "final_answer": friendly_error}
+            
+        except Exception as llm_error:
+            print(f"LLM错误转换失败: {llm_error}")
+            # 回退到原来的处理方式
+            intent = state.get("query_analysis_intent", "query")
+            clarify_msg = "请澄清你的分析需求。" if intent == "analysis" else "请澄清你的查询条件。"
+            return {"sql_result": None, "error_message": error_msg, "final_answer": f"执行查询时遇到错误。{clarify_msg}"}
 
 # --- 查询/分析流程 - 简单回复节点 ---
 
