@@ -1,43 +1,35 @@
+import { ChatInterface } from '@/components/chat/ChatInterface'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+
 export default function Home() {
   return (
-    <main className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-foreground mb-4">
-            DifyLang
-          </h1>
-          <p className="text-xl text-muted-foreground">
-            智能数据库操作平台
-          </p>
-        </div>
-        
-        <div className="max-w-6xl mx-auto">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <main className="h-screen flex flex-col bg-background">
+      {/* 页面头部 */}
+      <div className="flex-shrink-0 text-center py-6">
+        <h1 className="text-4xl font-bold text-foreground mb-2">
+          DifyLang
+        </h1>
+        <p className="text-xl text-muted-foreground">
+          智能数据库操作平台
+        </p>
+      </div>
+      
+      {/* 主内容区域 */}
+      <div className="flex-1 min-h-0 px-4 pb-6">
+        <div className="max-w-6xl mx-auto h-full">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
             {/* 聊天区域 */}
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h2 className="text-2xl font-semibold mb-4">对话区域</h2>
-              <div className="h-96 bg-muted rounded-md p-4 mb-4">
-                <p className="text-muted-foreground">聊天消息将在这里显示...</p>
-              </div>
-              <div className="flex gap-2">
-                <input 
-                  type="text" 
-                  placeholder="输入您的数据库操作需求..."
-                  className="flex-1 px-3 py-2 border border-input rounded-md bg-background"
-                />
-                <button className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90">
-                  发送
-                </button>
-              </div>
-            </div>
+            <ChatInterface />
             
             {/* 数据展示区域 */}
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h2 className="text-2xl font-semibold mb-4">数据展示</h2>
-              <div className="h-96 bg-muted rounded-md p-4">
+            <Card className="flex flex-col">
+              <CardHeader className="flex-shrink-0">
+                <CardTitle className="text-lg">数据展示</CardTitle>
+              </CardHeader>
+              <CardContent className="flex-1 min-h-0 flex items-center justify-center">
                 <p className="text-muted-foreground">查询结果将在这里显示...</p>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>

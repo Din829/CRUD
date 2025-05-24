@@ -1155,6 +1155,87 @@ def execute_batch_operations():
              app.logger.error(error_msg, exc_info=True)
              return jsonify({"error": error_msg, "results": batch_results}), 500
 
+@app.route('/chat', methods=['POST'])
+def chat_with_langgraph():
+    """
+    新增：LangGraph 对话流程 HTTP 端点
+    接收前端聊天消息，通过 LangGraph 处理，返回 AI 回复
+    """
+    try:
+        data = request.get_json()
+        user_query = data.get('message', '')
+        session_id = data.get('session_id', 'default_session')
+        
+        if not user_query:
+            return jsonify({"error": "No message provided"}), 400
+            
+        app.logger.debug(f"Received chat message: {user_query}")
+        app.logger.debug(f"Session ID: {session_id}")
+        
+        # 导入 LangGraph 相关模块
+        import sys
+        import os
+        
+        # 确保 LangGraph 项目路径在 Python 路径中
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+            
+        from langgraph_crud_app.graph.graph_builder import build_graph
+        from langgraph.checkpoint.sqlite import SqliteSaver
+        
+        # 构建和编译 LangGraph
+        graph_builder = build_graph()
+        
+        # 使用内存检查点
+        db_conn_string = ":memory:"
+        with SqliteSaver.from_conn_string(db_conn_string) as memory:
+            runnable = graph_builder.compile(checkpointer=memory)
+            
+            # 配置会话
+            config = {"configurable": {"thread_id": session_id}}
+            
+            # 处理用户查询
+            inputs = {"user_query": user_query}
+            
+            # 执行 LangGraph 流程
+            events = runnable.stream(inputs, config=config, stream_mode="values")
+            
+            final_state = None
+            for event in events:
+                final_state = event
+                
+            # 提取结果
+            if final_state:
+                final_answer = final_state.get('final_answer', '抱歉，我暂时无法处理您的请求。')
+                error_message = final_state.get('error_message')
+                
+                response_data = {
+                    "message": final_answer,
+                    "success": not bool(error_message),
+                    "session_id": session_id
+                }
+                
+                if error_message:
+                    response_data["error"] = error_message
+                    
+                app.logger.debug(f"LangGraph response: {final_answer}")
+                return jsonify(response_data)
+            else:
+                return jsonify({
+                    "message": "抱歉，处理过程中出现了问题。",
+                    "success": False,
+                    "session_id": session_id
+                }), 500
+                
+    except Exception as e:
+        app.logger.error(f"Chat endpoint error: {e}")
+        return jsonify({
+            "error": f"服务器处理错误: {str(e)}",
+            "message": "抱歉，服务暂时不可用，请稍后再试。",
+            "success": False
+        }), 500
+
 if __name__ == '__main__':
     # 注意：从环境变量加载配置或使用默认值
     flask_host = os.environ.get('FLASK_RUN_HOST', '0.0.0.0')
