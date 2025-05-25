@@ -1,5 +1,5 @@
 import { ChatInterface } from '@/components/chat/ChatInterface'
-import { TableDisplay } from '@/components/data/TableDisplay'
+import { SchemaView } from '@/components/data/SchemaView'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 export default function Home() {
@@ -26,11 +26,11 @@ export default function Home() {
         <div className="w-1/2 min-h-0 border-l p-4">
           <Card className="h-full flex flex-col">
             <CardHeader className="flex-shrink-0 pb-3">
-              <CardTitle className="text-lg">数据展示</CardTitle>
+              <CardTitle className="text-lg">数据库结构</CardTitle>
             </CardHeader>
             <CardContent className="flex-1 min-h-0 overflow-hidden p-4">
               <div className="h-full overflow-auto">
-                <TableDisplay />
+                <SchemaView />
               </div>
             </CardContent>
           </Card>
