@@ -1,36 +1,39 @@
 import { ChatInterface } from '@/components/chat/ChatInterface'
+import { TableDisplay } from '@/components/data/TableDisplay'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 export default function Home() {
   return (
     <main className="h-screen flex flex-col bg-background">
-      {/* 页面头部 */}
-      <div className="flex-shrink-0 text-center py-6">
-        <h1 className="text-4xl font-bold text-foreground mb-2">
+      {/* 页面头部 - 缩小高度 */}
+      <div className="flex-shrink-0 text-center py-3 border-b">
+        <h1 className="text-2xl font-bold text-foreground mb-1">
           DifyLang
         </h1>
-        <p className="text-xl text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           智能数据库操作平台
         </p>
       </div>
       
-      {/* 主内容区域 */}
-      <div className="flex-1 min-h-0 px-4 pb-6">
-        <div className="max-w-6xl mx-auto h-full">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
-            {/* 聊天区域 */}
-            <ChatInterface />
-            
-            {/* 数据展示区域 */}
-            <Card className="flex flex-col">
-              <CardHeader className="flex-shrink-0">
-                <CardTitle className="text-lg">数据展示</CardTitle>
-              </CardHeader>
-              <CardContent className="flex-1 min-h-0 flex items-center justify-center">
-                <p className="text-muted-foreground">查询结果将在这里显示...</p>
-              </CardContent>
-            </Card>
-          </div>
+      {/* 主内容区域 - 一半一半布局 */}
+      <div className="flex-1 min-h-0 flex">
+        {/* 聊天区域 - 占据一半空间 */}
+        <div className="w-1/2 min-h-0 p-4">
+          <ChatInterface />
+        </div>
+        
+        {/* 数据展示区域 - 占据一半空间 */}
+        <div className="w-1/2 min-h-0 border-l p-4">
+          <Card className="h-full flex flex-col">
+            <CardHeader className="flex-shrink-0 pb-3">
+              <CardTitle className="text-lg">数据展示</CardTitle>
+            </CardHeader>
+            <CardContent className="flex-1 min-h-0 overflow-hidden p-4">
+              <div className="h-full overflow-auto">
+                <TableDisplay />
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </main>

@@ -3,7 +3,7 @@
 """
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from typing import List, Dict, Any, Optional
 import json # 新增导入
@@ -287,9 +287,9 @@ def check_for_direct_id_modification_intent(query: str) -> Optional[str]:
     # 使用与 parse_modify_request 相同的 ChatPromptTemplate 方式
     system_prompt = """你是一个高度精确的意图分析助手。你的任务是判断用户查询是否包含 **明确且直接地要求将某个现有记录的主键 ID 值更改为另一个具体值** 的意图。"""
     user_prompt = """请仔细分析以下用户查询：
-\`\`\`
+```
 {query}
-\`\`\`
+```
 
 请特别注意区分以下情况，这些情况 **不应** 被视为明确修改主键 ID：
 - 使用 ID 来查找或筛选记录（例如："更新 ID 为 5 的订单状态"）。

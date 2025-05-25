@@ -12,12 +12,12 @@ interface ChatInterfaceProps {
 
 export function ChatInterface({ className }: ChatInterfaceProps) {
   return (
-    <Card className={cn("flex flex-col h-full", className)}>
+    <Card className={cn("flex flex-col h-full max-h-full", className)}>
       <CardHeader className="flex-shrink-0 pb-3">
-        <CardTitle className="text-lg">对话区域</CardTitle>
+        <CardTitle className="text-lg">💬 智能对话</CardTitle>
       </CardHeader>
       
-      <CardContent className="flex-1 min-h-0 flex flex-col p-0">
+      <CardContent className="flex-1 min-h-0 flex flex-col p-0 overflow-hidden">
         {/* 消息列表区域 - 可滚动 */}
         <div className="flex-1 min-h-0 overflow-hidden">
           <MessageList />
