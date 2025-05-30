@@ -19,11 +19,11 @@ interface ConversationState {
 }
 
 export const useConversationStore = create<ConversationState>((set, get) => ({
-  // 初始状态
+  // 初始状态 - 立即生成一个session ID
   messages: [],
   isTyping: false,
   currentInput: '',
-  conversationId: '',
+  conversationId: `session_${Date.now()}`,
   
   // 动作实现
   sendMessage: async (content: string) => {
@@ -42,12 +42,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     set({ isTyping: true })
     
     try {
-      // 调用 LangGraph API
-      console.log('发送消息到 LangGraph:', content)
-      const response = await ApiClient.sendMessage(content, conversationId || undefined)
+      // 调用 LangGraph API - 始终传递有效的conversationId
+      console.log('发送消息到 LangGraph:', content, '会话ID:', conversationId)
+      const response = await ApiClient.sendMessage(content, conversationId)
       
-      // 更新会话 ID
+      // 更新会话 ID（如果后端返回了新的session_id）
       if (response.session_id && response.session_id !== conversationId) {
+        console.log('更新会话ID:', response.session_id)
         set({ conversationId: response.session_id })
       }
       
@@ -108,7 +109,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       messages: [],
       isTyping: false,
       currentInput: '',
-      conversationId: Date.now().toString()
+      conversationId: `session_${Date.now()}`  // 重新生成新的session ID
     })
   },
   
