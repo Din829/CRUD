@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { QueryResult, TableSchema } from '@/types'
+import { ApiClient } from '@/lib/api'
 
 /**
  * 数据状态接口
@@ -11,6 +12,18 @@ interface DataState {
   schema: TableSchema[]
   isLoading: boolean
   error: string | null
+  
+  // 数据库管理器状态
+  selectedTable: string | null
+  tableViewData: Record<string, any>[]
+  tableViewLoading: boolean
+  tableViewError: string | null
+  tableViewPagination: {
+    page: number
+    limit: number
+    total: number
+    totalPages: number
+  }
   
   // 表格控制状态
   selectedRows: Record<string, any>[]
@@ -32,6 +45,14 @@ interface DataState {
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   
+  // 数据库管理器方法
+  setSelectedTable: (tableName: string | null) => void
+  setTableViewData: (data: Record<string, any>[]) => void
+  setTableViewLoading: (loading: boolean) => void
+  setTableViewError: (error: string | null) => void
+  setTableViewPagination: (pagination: Partial<DataState['tableViewPagination']>) => void
+  loadTableData: (tableName: string, page?: number) => Promise<void>
+  
   // 表格控制方法
   setSelectedRows: (rows: Record<string, any>[]) => void
   updateSort: (key: string, direction: 'asc' | 'desc') => void
@@ -52,6 +73,19 @@ const initialState = {
   schema: [],
   isLoading: false,
   error: null,
+  
+  // 数据库管理器状态
+  selectedTable: null,
+  tableViewData: [],
+  tableViewLoading: false,
+  tableViewError: null,
+  tableViewPagination: {
+    page: 1,
+    limit: 50,
+    total: 0,
+    totalPages: 0
+  },
+  
   selectedRows: [],
   sortConfig: null,
   filterConfig: {},
@@ -99,6 +133,53 @@ export const useDataStore = create<DataState>((set, get) => ({
   
   // 设置错误信息
   setError: (error) => set({ error }),
+  
+  // 数据库管理器方法
+  setSelectedTable: (tableName) => set({ selectedTable: tableName }),
+  
+  setTableViewData: (data) => set({ tableViewData: data }),
+  
+  setTableViewLoading: (loading) => set({ tableViewLoading: loading }),
+  
+  setTableViewError: (error) => set({ tableViewError: error }),
+  
+  setTableViewPagination: (pagination) => {
+    set({ 
+      tableViewPagination: { ...get().tableViewPagination, ...pagination }
+    })
+  },
+
+  loadTableData: async (tableName, page = 1) => {
+    const { tableViewPagination } = get()
+    
+    try {
+      set({ tableViewLoading: true, tableViewError: null })
+      
+      // 并行获取数据和总记录数
+      const [data, totalCount] = await Promise.all([
+        ApiClient.getTableData(tableName, page, tableViewPagination.limit),
+        ApiClient.getTableCount(tableName)
+      ])
+      
+      const totalPages = Math.ceil(totalCount / tableViewPagination.limit)
+      
+      set({
+        tableViewData: data.rows,
+        tableViewPagination: {
+          ...tableViewPagination,
+          page,
+          total: totalCount,
+          totalPages
+        }
+      })
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '加载表数据失败'
+      set({ tableViewError: errorMessage })
+      console.error(`加载表 ${tableName} 数据失败:`, error)
+    } finally {
+      set({ tableViewLoading: false })
+    }
+  },
   
   // 设置选中行
   setSelectedRows: (rows) => set({ selectedRows: rows }),

@@ -1,10 +1,26 @@
+'use client'
+
+import { useState } from 'react'
 import { ChatInterface } from '@/components/chat/ChatInterface'
 import { SchemaView } from '@/components/data/SchemaView'
+import { DataViewer } from '@/components/data/DataViewer'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { TestTube } from 'lucide-react'
+import { TestTube, ChevronUp, ChevronDown } from 'lucide-react'
 
 export default function Home() {
+  const [selectedTable, setSelectedTable] = useState<string | null>(null)
+  const [isSchemaCollapsed, setIsSchemaCollapsed] = useState(false)
+
+  // 处理表选择
+  const handleTableSelect = (tableName: string) => {
+    setSelectedTable(tableName)
+  }
+
+  // 切换数据库结构折叠状态
+  const toggleSchemaCollapse = () => {
+    setIsSchemaCollapsed(!isSchemaCollapsed)
+  }
   return (
     <main className="h-screen flex flex-col bg-background">
       {/* 页面头部 - 增加测试入口 */}
@@ -44,17 +60,42 @@ export default function Home() {
         </div>
         
         {/* 数据展示区域 - 占据一半空间 */}
-        <div className="w-1/2 min-h-0 border-l p-4">
-          <Card className="h-full flex flex-col">
-            <CardHeader className="flex-shrink-0 pb-3">
-              <CardTitle className="text-lg">数据库结构</CardTitle>
-            </CardHeader>
-            <CardContent className="flex-1 min-h-0 overflow-hidden p-4">
-              <div className="h-full overflow-auto">
-                <SchemaView />
+        <div className="w-1/2 min-h-0 border-l p-4 flex flex-col gap-4">
+          {/* 数据库结构区域 - 可折叠 */}
+          <Card className={`flex flex-col transition-all duration-300 ${
+            isSchemaCollapsed ? 'h-16' : 'h-80'
+          }`}>
+            <CardHeader 
+              className="flex-shrink-0 pb-2 cursor-pointer hover:bg-muted/50 transition-colors"
+              onClick={toggleSchemaCollapse}
+            >
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">数据库结构</CardTitle>
+                <Button variant="ghost" size="sm">
+                  {isSchemaCollapsed ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronUp className="h-4 w-4" />
+                  )}
+                </Button>
               </div>
-            </CardContent>
+            </CardHeader>
+            {!isSchemaCollapsed && (
+              <CardContent className="flex-1 min-h-0 overflow-hidden p-4">
+                <div className="h-full overflow-auto">
+                  <SchemaView 
+                    selectedTable={selectedTable}
+                    onTableSelect={handleTableSelect}
+                  />
+                </div>
+              </CardContent>
+            )}
           </Card>
+
+          {/* 表数据查看区域 - 主要展示区域 */}
+          <div className="flex-1 min-h-0">
+            <DataViewer selectedTable={selectedTable} />
+          </div>
         </div>
       </div>
     </main>

@@ -35,10 +35,15 @@ interface TableInfo {
   recordCount?: number
 }
 
+interface SchemaViewProps {
+  selectedTable?: string | null
+  onTableSelect?: (tableName: string) => void
+}
+
 /**
  * SchemaView 组件 - 数据库结构可视化
  */
-export function SchemaView() {
+export function SchemaView({ selectedTable, onTableSelect }: SchemaViewProps = {}) {
   const { schema, setSchema, setLoading, setError, isLoading, error } = useDataStore()
   const [tables, setTables] = useState<TableInfo[]>([])
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set())
@@ -145,6 +150,17 @@ export function SchemaView() {
     setExpandedTables(newExpanded)
   }
 
+  // 处理表名点击
+  const handleTableClick = (tableName: string, event: React.MouseEvent) => {
+    // 阻止点击时切换展开状态
+    event.stopPropagation()
+    
+    // 调用外部的表选择回调
+    if (onTableSelect) {
+      onTableSelect(tableName)
+    }
+  }
+
   // 获取字段类型颜色
   const getTypeColor = (type: string) => {
     const lowerType = type.toLowerCase()
@@ -231,7 +247,15 @@ export function SchemaView() {
                       <ChevronRight className="h-4 w-4" />
                     )}
                     <Table className="h-4 w-4 text-primary" />
-                    <CardTitle className="text-base">{table.name}</CardTitle>
+                    <CardTitle 
+                      className={`text-base cursor-pointer hover:text-primary transition-colors ${
+                        selectedTable === table.name ? 'text-primary font-semibold' : ''
+                      }`}
+                      onClick={(e) => handleTableClick(table.name, e)}
+                      title="点击查看表数据"
+                    >
+                      {table.name}
+                    </CardTitle>
                   </div>
                   <div className="flex items-center gap-4 text-sm text-muted-foreground">
                     <span>{table.fields.length} 个字段</span>
