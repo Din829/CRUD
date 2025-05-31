@@ -135,22 +135,12 @@ def stage_combined_action(state: GraphState) -> Dict[str, Any]:
         # lastest_content_production (操作计划) 已由上游节点设置
     }
 
-def stage_delete_action(state: GraphState) -> Dict[str, Any]:
-    """
-    节点动作：暂存【删除】操作，并向用户请求确认。
-    """
-    print("---节点: 暂存删除操作---")
-    content_to_delete = state.get("content_delete") # 获取删除预览文本
-
-    if not content_to_delete:
-        print("错误：无法暂存删除，缺少预览内容。")
-        return {"error_message": "无法暂存删除操作，缺少预览内容。"}
-
-    confirmation_message = f"请仔细检查以下将要删除的内容：\\n\\n{content_to_delete}\\n\\n请输入 '是' 确认删除，或输入 '否' 取消。"
-    return {
-        "save_content": "删除路径", # 设置删除标记
-        "final_answer": confirmation_message
-    }
+# 🎯 UI/UX改进：删除操作的暂存逻辑已移至预览阶段，无需独立的暂存节点
+# def stage_delete_action(state: GraphState) -> Dict[str, Any]:
+#     """
+#     节点动作：暂存【删除】操作，并向用户请求确认。
+#     已移除：删除操作现在直接在预览阶段设置暂存状态，避免"删除→保存"的奇怪流程
+#     """
 
 def handle_nothing_to_stage_action(state: GraphState) -> Dict[str, Any]:
     """

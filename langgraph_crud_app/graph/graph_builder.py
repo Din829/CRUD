@@ -50,8 +50,8 @@ from langgraph_crud_app.nodes.actions import (
     parse_combined_request_action,
     format_combined_preview_action
 )
-# Explicitly import stage_delete_action from its actual location
-from langgraph_crud_app.nodes.actions.flow_control_actions import stage_delete_action
+# 🎯 UI/UX改进：删除操作不再需要独立的暂存节点
+# from langgraph_crud_app.nodes.actions.flow_control_actions import stage_delete_action  # 已移除
 # 单独导入 add_actions 中的函数
 from langgraph_crud_app.nodes.actions.add_actions import (
     parse_add_request_action,
@@ -279,8 +279,8 @@ def build_graph() -> StateGraph:
     graph.add_node("handle_delete_error_action", handle_delete_error_action)
     graph.add_node("finalize_delete_response", finalize_delete_response)
 
-    # 新增：确认流程中的 stage_delete_action 节点
-    graph.add_node("stage_delete_action", stage_delete_action)
+    # 🎯 UI/UX改进：删除操作不再需要独立的暂存节点，已在预览阶段直接设置暂存状态
+    # graph.add_node("stage_delete_action", stage_delete_action)  # 已移除
 
     # --- 设置入口点 ---
     graph.set_entry_point("route_initialization_node")
@@ -396,7 +396,7 @@ def build_graph() -> StateGraph:
             "stage_operation_node": "stage_operation_node" 
         }
     )
-    # 确认流程 - 操作阶段路由 (添加 stage_add_action)
+    # 确认流程 - 操作阶段路由 
     graph.add_conditional_edges(
         "stage_operation_node",
         confirmation_router._stage_operation_logic,
@@ -404,7 +404,7 @@ def build_graph() -> StateGraph:
             "stage_modify_action": "stage_modify_action",
             "stage_add_action": "stage_add_action", # 新增路由
             "stage_combined_action": "stage_combined_action", # 新增：复合暂存路由
-            "stage_delete_action": "stage_delete_action", # *** 添加删除暂存分支 ***
+            # 🎯 UI/UX改进：删除操作已在预览阶段直接设置暂存，无需再次暂存
             "handle_nothing_to_stage": "handle_nothing_to_stage"
         }
     )
@@ -434,7 +434,8 @@ def build_graph() -> StateGraph:
     graph.add_edge("stage_modify_action", END)
     graph.add_edge("stage_add_action", END)
     graph.add_edge("stage_combined_action", END)
-    graph.add_edge("stage_delete_action", END) # *** 添加删除暂存结束边 ***
+    # 🎯 UI/UX改进：删除操作无需独立暂存边，已在预览阶段处理
+    # graph.add_edge("stage_delete_action", END)  # 已移除
     graph.add_edge("handle_nothing_to_stage", END)
 
     # 查询/分析 子意图路由

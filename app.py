@@ -10,10 +10,37 @@ from decimal import Decimal
 import re # <--- 新增导入
 import copy # <--- 新增导入 copy 用于深拷贝操作
 # from flask_cors import CORS # <--- 注释掉
+import threading
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 app = Flask(__name__)
 # CORS(app)  # 注释掉CORS
 logging.basicConfig(level=logging.DEBUG)
+
+# 全局checkpointer变量和锁
+_checkpointer = None
+_checkpointer_lock = threading.Lock()
+
+def get_langgraph_checkpointer():
+    """
+    获取LangGraph checkpointer单例
+    使用持久化的SQLite文件而不是内存数据库
+    修复：直接使用SqliteSaver构造函数并设置check_same_thread=False来避免SQLite线程安全问题
+    """
+    global _checkpointer, _checkpointer_lock
+    
+    with _checkpointer_lock:
+        if _checkpointer is None:
+            # 使用持久化的SQLite文件存储会话状态
+            # 这样多次请求之间的状态可以保持
+            # 重要修复：使用check_same_thread=False避免Flask多线程问题
+            import sqlite3
+            db_path = "langgraph_sessions.db"
+            conn = sqlite3.connect(db_path, check_same_thread=False)
+            _checkpointer = SqliteSaver(conn=conn)
+            app.logger.info(f"Created persistent checkpointer with database: {db_path}")
+        
+        return _checkpointer
 
 # 数据库连接上下文管理器
 @contextmanager
@@ -1182,51 +1209,50 @@ def chat_with_langgraph():
             sys.path.insert(0, project_root)
             
         from langgraph_crud_app.graph.graph_builder import build_graph
-        from langgraph.checkpoint.sqlite import SqliteSaver
         
         # 构建和编译 LangGraph
         graph_builder = build_graph()
         
-        # 使用内存检查点
-        db_conn_string = ":memory:"
-        with SqliteSaver.from_conn_string(db_conn_string) as memory:
-            runnable = graph_builder.compile(checkpointer=memory)
+        # 使用持久化的checkpointer
+        checkpointer = get_langgraph_checkpointer()
+        
+        # 直接编译图，不需要上下文管理器
+        runnable = graph_builder.compile(checkpointer=checkpointer)
+        
+        # 配置会话
+        config = {"configurable": {"thread_id": session_id}}
+        
+        # 处理用户查询
+        inputs = {"user_query": user_query}
+        
+        # 执行 LangGraph 流程
+        events = runnable.stream(inputs, config=config, stream_mode="values")
+        
+        final_state = None
+        for event in events:
+            final_state = event
             
-            # 配置会话
-            config = {"configurable": {"thread_id": session_id}}
+        # 提取结果
+        if final_state:
+            final_answer = final_state.get('final_answer', '抱歉，我暂时无法处理您的请求。')
+            error_message = final_state.get('error_message')
             
-            # 处理用户查询
-            inputs = {"user_query": user_query}
+            response_data = {
+                "message": final_answer,
+                "success": True,
+                "session_id": session_id
+            }
             
-            # 执行 LangGraph 流程
-            events = runnable.stream(inputs, config=config, stream_mode="values")
-            
-            final_state = None
-            for event in events:
-                final_state = event
+            if error_message:
+                response_data["error"] = error_message
                 
-            # 提取结果
-            if final_state:
-                final_answer = final_state.get('final_answer', '抱歉，我暂时无法处理您的请求。')
-                error_message = final_state.get('error_message')
-                
-                response_data = {
-                    "message": final_answer,
-                    "success": not bool(error_message),
-                    "session_id": session_id
-                }
-                
-                if error_message:
-                    response_data["error"] = error_message
-                    
-                app.logger.debug(f"LangGraph response: {final_answer}")
-                return jsonify(response_data)
-            else:
-                return jsonify({
-                    "message": "抱歉，处理过程中出现了问题。",
-                    "success": False,
-                    "session_id": session_id
-                }), 500
+            return jsonify(response_data)
+        else:
+            return jsonify({
+                "message": "抱歉，没有收到有效响应。", 
+                "success": False,
+                "session_id": session_id
+            })
                 
     except Exception as e:
         app.logger.error(f"Chat endpoint error: {e}")

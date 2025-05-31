@@ -283,8 +283,14 @@ def provide_delete_feedback_action(state: GraphState) -> Dict[str, Any]:
         if preview_text == "未找到需要删除的记录。":
             final_answer_value = preview_text # 直接显示未找到
         else:
-            # 成功生成预览，请求确认
-            final_answer_value = f"{preview_text}\n\n请输入 '保存' 以继续删除流程，或输入 '重置' 取消。"
+            # 🎯 UI/UX改进：删除流程直接请求确认，跳过"保存"步骤
+            # 删除操作语义上不是"保存"，应该直接确认
+            final_answer_value = f"以下是即将【删除】的信息，请确认，并回复'是'/'否'\n\n{preview_text}"
+            # 🔧 同时设置删除暂存状态，让确认流程知道这是删除操作
+            return {
+                "final_answer": final_answer_value,
+                "save_content": "删除路径"  # 直接设置暂存状态
+            }
     else:
         # 理论上不应发生，除非流程逻辑错误
         final_answer_value = "抱歉，处理您的删除请求时发生未知错误。"

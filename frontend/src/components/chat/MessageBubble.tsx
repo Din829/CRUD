@@ -25,6 +25,7 @@ export function MessageBubble({ message, className }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const { sendMessage } = useConversationStore()
   const [isProcessing, setIsProcessing] = useState(false)
+  const [hasResponded, setHasResponded] = useState(false) // 是否已经响应过
 
   /**
    * 检测是否为后端发送的确认类消息
@@ -56,13 +57,16 @@ export function MessageBubble({ message, className }: MessageBubbleProps) {
    * 处理确认操作 - 直接发送"是"给后端
    */
   const handleConfirm = async () => {
+    if (hasResponded) return // 防止重复响应
+    
     setIsProcessing(true)
     try {
       await sendMessage('是')
+      setHasResponded(true) // 标记已响应，按钮永久禁用
+      setIsProcessing(false) // 停止加载动画
     } catch (error) {
       console.error('发送确认消息失败:', error)
-    } finally {
-      setIsProcessing(false)
+      setIsProcessing(false) // 出错时恢复，允许重试
     }
   }
 
@@ -70,13 +74,16 @@ export function MessageBubble({ message, className }: MessageBubbleProps) {
    * 处理取消操作 - 直接发送"否"给后端
    */
   const handleCancel = async () => {
+    if (hasResponded) return // 防止重复响应
+    
     setIsProcessing(true)
     try {
       await sendMessage('否')
+      setHasResponded(true) // 标记已响应，按钮永久禁用
+      setIsProcessing(false) // 停止加载动画
     } catch (error) {
       console.error('发送取消消息失败:', error)
-    } finally {
-      setIsProcessing(false)
+      setIsProcessing(false) // 出错时恢复，允许重试
     }
   }
 
@@ -104,27 +111,35 @@ export function MessageBubble({ message, className }: MessageBubbleProps) {
               <Button
                 size="sm"
                 onClick={handleConfirm}
-                disabled={isProcessing}
+                disabled={isProcessing || hasResponded}
                 className="flex-1 h-8"
                 variant={getConfirmationType() === 'delete' ? 'destructive' : 'default'}
               >
                 {isProcessing ? (
                   <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-current mr-1" />
+                ) : hasResponded ? (
+                  <CheckCircle className="h-3 w-3 mr-1 text-green-500" />
                 ) : (
                   <CheckCircle className="h-3 w-3 mr-1" />
                 )}
-                是
+                {hasResponded ? '已确认' : '是'}
               </Button>
               
               <Button
                 size="sm"
                 variant="outline"
                 onClick={handleCancel}
-                disabled={isProcessing}
+                disabled={isProcessing || hasResponded}
                 className="flex-1 h-8"
               >
-                <XCircle className="h-3 w-3 mr-1" />
-                否
+                {isProcessing ? (
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-current mr-1" />
+                ) : hasResponded ? (
+                  <XCircle className="h-3 w-3 mr-1 text-red-500" />
+                ) : (
+                  <XCircle className="h-3 w-3 mr-1" />
+                )}
+                {hasResponded ? '已取消' : '否'}
               </Button>
             </div>
             
